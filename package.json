@@ -10,7 +10,7 @@
     "test": "jest --testPathIgnorePatterns=tests/integration",
     "test:unit": "jest --testPathIgnorePatterns=tests/integration",
     "test:integration": "jest --testMatch='**/tests/integration/**/*.test.ts' --runInBand --testTimeout=120000",
-    "test:integration:devnet": "CITRATE_RPC_URL=http://localhost:8545 CITRATE_CHAIN_ID=1337 npm run test:integration",
+    "test:integration:devnet": "CITRATE_RPC_URL=http://localhost:8545 CITRATE_CHAIN_ID=40204 npm run test:integration",
     "test:all": "jest --testTimeout=120000",
     "test:watch": "jest --watch",
     "lint": "eslint src/**/*.ts",
