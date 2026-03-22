@@ -589,5 +589,5 @@ Apache License 2.0 - see [LICENSE](LICENSE) file for details.
 
 - **Documentation**: https://docs.citrate.ai
 - **GitHub**: https://github.com/citrate-ai/citrate
-- **Discord**: https://discord.gg/citrate
+- **Discord**: https://discord.gg/A3Uwe4BvdN
 - **Issues**: https://github.com/citrate-ai/citrate/issues
