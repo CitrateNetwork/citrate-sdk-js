@@ -113,7 +113,7 @@ import { useCitrateClient, useInference } from 'citrate-js';
 
 function AIChat() {
   const { client, isConnected } = useCitrateClient({
-    rpcUrl: 'https://mainnet.citrate.ai',
+    rpcUrl: 'https://rpc.citrate.ai',
     autoConnect: true
   });
 
@@ -151,7 +151,7 @@ function AIChat() {
 import { WebSocketClient } from 'citrate-js';
 
 const wsClient = new WebSocketClient({
-  url: 'wss://mainnet.citrate.ai/ws'
+  url: 'wss://rpc.citrate.ai/ws'
 });
 
 await wsClient.connect();

@@ -6,7 +6,7 @@
  *
  * Environment variables:
  * - CITRATE_RPC_URL: RPC endpoint (default: http://localhost:8545)
- * - CITRATE_CHAIN_ID: Chain ID (default: 1337)
+ * - CITRATE_CHAIN_ID: Chain ID (default: 40204 for testnet, use 1337 for local devnet)
  */
 
 import { ethers } from 'ethers';
@@ -18,7 +18,7 @@ import { CitrateError } from '../../src/errors/CitrateError';
 // ============================================================================
 
 const RPC_ENDPOINT = process.env.CITRATE_RPC_URL || 'http://localhost:8545';
-const CHAIN_ID = parseInt(process.env.CITRATE_CHAIN_ID || '1337');
+const CHAIN_ID = parseInt(process.env.CITRATE_CHAIN_ID || '40204');
 
 // Well-known test accounts (from Hardhat/Anvil)
 const TEST_ACCOUNTS = [

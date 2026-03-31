@@ -295,7 +295,7 @@ export class CitrateClient {
 
   // Model information
   async getModelInfo(modelId: string): Promise<ModelInfo> {
-    const response = await this.rpcCall('citrate_getModelInfo', [modelId]);
+    const response = await this.rpcCall('citrate_getModel', [modelId]);
 
     if (!response) {
       throw new ModelNotFoundError(`Model not found: ${modelId}`);
