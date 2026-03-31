@@ -2,34 +2,38 @@
  * Constants for Citrate JavaScript SDK
  */
 
-// Network constants
+// Network constants — canonical chain IDs (match CONFIG.md)
 export const CHAIN_IDS = {
-  MAINNET: 1,
-  TESTNET: 1337,
-  LOCAL: 31337
+  MAINNET: 1,       // Reserved for mainnet
+  TESTNET: 40204,   // Testnet beta (rpc.citrate.ai)
+  LOCAL: 1337,      // Local devnet
 } as const;
 
-export const DEFAULT_RPC_URLS = {
-  [CHAIN_IDS.MAINNET]: 'https://mainnet.citrate.ai',
-  [CHAIN_IDS.TESTNET]: 'https://testnet.citrate.ai',
-  [CHAIN_IDS.LOCAL]: 'http://localhost:8545'
-} as const;
+export const DEFAULT_RPC_URLS: Record<number, string> = {
+  [CHAIN_IDS.TESTNET]: 'https://rpc.citrate.ai',
+  [CHAIN_IDS.LOCAL]: 'http://localhost:8545',
+};
 
-export const DEFAULT_WS_URLS = {
-  [CHAIN_IDS.MAINNET]: 'wss://mainnet.citrate.ai/ws',
-  [CHAIN_IDS.TESTNET]: 'wss://testnet.citrate.ai/ws',
-  [CHAIN_IDS.LOCAL]: 'ws://localhost:8546'
-} as const;
+export const DEFAULT_WS_URLS: Record<number, string> = {
+  [CHAIN_IDS.TESTNET]: 'wss://rpc.citrate.ai/ws',
+  [CHAIN_IDS.LOCAL]: 'ws://localhost:8546',
+};
 
-// Precompile addresses
+// State-changing precompile addresses (canonical — match executor.rs)
+// These are the addresses the executor actually dispatches to for on-chain model state
 export const PRECOMPILE_ADDRESSES = {
-  MODEL_DEPLOY: '0x0100000000000000000000000000000000000100',
-  MODEL_INFERENCE: '0x0100000000000000000000000000000000000101',
-  MODEL_REGISTRY: '0x0100000000000000000000000000000000000102',
-  MODEL_METADATA: '0x0100000000000000000000000000000000000103',
-  ACCESS_CONTROL: '0x0100000000000000000000000000000000000104',
-  INFERENCE_CACHE: '0x0100000000000000000000000000000000000105',
-  MODEL_ENCRYPTION: '0x0100000000000000000000000000000000000106'
+  // Canonical state precompiles (executor.rs model_precompile_address / artifact / governance)
+  MODEL: '0x0000000000000000000000000000000000001000',
+  ARTIFACT: '0x0000000000000000000000000000000000001002',
+  GOVERNANCE: '0x0000000000000000000000000000000000001003',
+  // Runtime AI inference precompiles (inference.rs, 0x0100-0x0106)
+  INFERENCE_DEPLOY: '0x0000000000000000000000000000000000000100',
+  INFERENCE_RUN: '0x0000000000000000000000000000000000000101',
+  INFERENCE_BATCH: '0x0000000000000000000000000000000000000102',
+  INFERENCE_METADATA: '0x0000000000000000000000000000000000000103',
+  INFERENCE_VERIFY: '0x0000000000000000000000000000000000000104',
+  INFERENCE_BENCHMARK: '0x0000000000000000000000000000000000000105',
+  INFERENCE_ENCRYPT: '0x0000000000000000000000000000000000000106',
 } as const;
 
 // Gas limits
