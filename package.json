@@ -1,7 +1,7 @@
 {
   "name": "citrate-js",
   "version": "0.2.0",
-  "description": "JavaScript/TypeScript SDK for the Citrate distributed AI network",
+  "description": "Canonical TypeScript/JavaScript SDK for the Citrate distributed AI network. This is the canonical SDK — all other language SDKs are non-canonical until a real pilot integrator requires parity.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -10,7 +10,7 @@
     "test": "jest --testPathIgnorePatterns=tests/integration",
     "test:unit": "jest --testPathIgnorePatterns=tests/integration",
     "test:integration": "jest --testMatch='**/tests/integration/**/*.test.ts' --runInBand --testTimeout=120000",
-    "test:integration:devnet": "CITRATE_RPC_URL=http://localhost:8545 CITRATE_CHAIN_ID=40204 npm run test:integration",
+    "test:integration:testnet": "CITRATE_RPC_URL=http://localhost:8545 CITRATE_CHAIN_ID=40204 npm run test:integration",
     "test:all": "jest --testTimeout=120000",
     "test:watch": "jest --watch",
     "lint": "eslint src/**/*.ts",

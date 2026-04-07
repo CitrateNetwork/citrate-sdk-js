@@ -6,7 +6,7 @@
  *
  * Environment variables:
  * - CITRATE_RPC_URL: RPC endpoint (default: http://localhost:8545)
- * - CITRATE_CHAIN_ID: Chain ID (default: 40204 for testnet, use 1337 for local devnet)
+ * - CITRATE_CHAIN_ID: Chain ID (default: 40204, the canonical testnet beta)
  */
 
 import { ethers } from 'ethers';
