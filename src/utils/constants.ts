@@ -6,17 +6,14 @@
 export const CHAIN_IDS = {
   MAINNET: 1,       // Reserved for mainnet
   TESTNET: 40204,   // Testnet beta (rpc.citrate.ai)
-  LOCAL: 1337,      // Local devnet
 } as const;
 
 export const DEFAULT_RPC_URLS: Record<number, string> = {
   [CHAIN_IDS.TESTNET]: 'https://rpc.citrate.ai',
-  [CHAIN_IDS.LOCAL]: 'http://localhost:8545',
 };
 
 export const DEFAULT_WS_URLS: Record<number, string> = {
   [CHAIN_IDS.TESTNET]: 'wss://rpc.citrate.ai/ws',
-  [CHAIN_IDS.LOCAL]: 'ws://localhost:8546',
 };
 
 // State-changing precompile addresses (canonical — match executor.rs)
