@@ -34,7 +34,9 @@ const TEST_ACCOUNTS = [
     privateKey: '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a',
     address: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
   },
-];
+] as const;
+
+const [PRIMARY_ACCOUNT, SECONDARY_ACCOUNT, TERTIARY_ACCOUNT] = TEST_ACCOUNTS;
 
 // ============================================================================
 // Test Helpers
@@ -77,7 +79,7 @@ async function rpcCall(method: string, params: any[], rpcUrl: string): Promise<a
   return data.result;
 }
 
-function createRandomWallet(): ethers.Wallet {
+function createRandomWallet() {
   return ethers.Wallet.createRandom();
 }
 
@@ -110,7 +112,7 @@ beforeAll(async () => {
   // Initialize client with funded account
   fundedClient = new CitrateClient({
     rpcUrl: RPC_ENDPOINT,
-    privateKey: TEST_ACCOUNTS[0].privateKey,
+    privateKey: PRIMARY_ACCOUNT.privateKey,
   });
 }, 30000);
 
@@ -130,10 +132,10 @@ describe('CitrateClient Connection', () => {
   it('initializes with private key', () => {
     const walletClient = new CitrateClient({
       rpcUrl: RPC_ENDPOINT,
-      privateKey: TEST_ACCOUNTS[0].privateKey,
+      privateKey: PRIMARY_ACCOUNT.privateKey,
     });
     expect(walletClient).toBeDefined();
-    expect(walletClient.getAddress()?.toLowerCase()).toBe(TEST_ACCOUNTS[0].address.toLowerCase());
+    expect(walletClient.getAddress()?.toLowerCase()).toBe(PRIMARY_ACCOUNT.address.toLowerCase());
   });
 
   it('returns correct chain ID', async () => {
@@ -168,7 +170,7 @@ describe('CitrateClient Balance', () => {
       return;
     }
 
-    const balance = await client.getBalance(TEST_ACCOUNTS[1].address);
+    const balance = await client.getBalance(SECONDARY_ACCOUNT.address);
     expect(balance).toBeGreaterThan(0n);
   });
 
@@ -228,19 +230,19 @@ describe('CitrateClient Address Derivation', () => {
   it('derives correct address from private key', () => {
     const testClient = new CitrateClient({
       rpcUrl: RPC_ENDPOINT,
-      privateKey: TEST_ACCOUNTS[0].privateKey,
+      privateKey: PRIMARY_ACCOUNT.privateKey,
     });
-    expect(testClient.getAddress()?.toLowerCase()).toBe(TEST_ACCOUNTS[0].address.toLowerCase());
+    expect(testClient.getAddress()?.toLowerCase()).toBe(PRIMARY_ACCOUNT.address.toLowerCase());
   });
 
   it('different private keys produce different addresses', () => {
     const client1 = new CitrateClient({
       rpcUrl: RPC_ENDPOINT,
-      privateKey: TEST_ACCOUNTS[0].privateKey,
+      privateKey: PRIMARY_ACCOUNT.privateKey,
     });
     const client2 = new CitrateClient({
       rpcUrl: RPC_ENDPOINT,
-      privateKey: TEST_ACCOUNTS[1].privateKey,
+      privateKey: SECONDARY_ACCOUNT.privateKey,
     });
 
     expect(client1.getAddress()).not.toBe(client2.getAddress());
@@ -249,21 +251,21 @@ describe('CitrateClient Address Derivation', () => {
   it('same private key produces same address', () => {
     const client1 = new CitrateClient({
       rpcUrl: RPC_ENDPOINT,
-      privateKey: TEST_ACCOUNTS[0].privateKey,
+      privateKey: PRIMARY_ACCOUNT.privateKey,
     });
     const client2 = new CitrateClient({
       rpcUrl: RPC_ENDPOINT,
-      privateKey: TEST_ACCOUNTS[0].privateKey,
+      privateKey: PRIMARY_ACCOUNT.privateKey,
     });
 
     expect(client1.getAddress()).toBe(client2.getAddress());
   });
 
   it('address matches ethers.js derivation', () => {
-    const wallet = new ethers.Wallet(TEST_ACCOUNTS[0].privateKey);
+    const wallet = new ethers.Wallet(PRIMARY_ACCOUNT.privateKey);
     const testClient = new CitrateClient({
       rpcUrl: RPC_ENDPOINT,
-      privateKey: TEST_ACCOUNTS[0].privateKey,
+      privateKey: PRIMARY_ACCOUNT.privateKey,
     });
 
     expect(testClient.getAddress()?.toLowerCase()).toBe(wallet.address.toLowerCase());
@@ -377,7 +379,7 @@ describe('CitrateClient Concurrent Requests', () => {
       return;
     }
 
-    const addresses = TEST_ACCOUNTS.map((a) => a.address);
+    const addresses = [PRIMARY_ACCOUNT.address, SECONDARY_ACCOUNT.address, TERTIARY_ACCOUNT.address];
     const promises = addresses.map((addr) => client.getBalance(addr));
 
     const balances = await Promise.all(promises);
@@ -428,7 +430,7 @@ describe('CitrateClient Performance', () => {
     }
 
     const start = Date.now();
-    await client.getBalance(TEST_ACCOUNTS[0].address);
+    await client.getBalance(PRIMARY_ACCOUNT.address);
     const elapsed = Date.now() - start;
 
     expect(elapsed).toBeLessThan(5000);
@@ -478,14 +480,14 @@ describe('CitrateClient Consistency', () => {
       return;
     }
 
-    const balance1 = await client.getBalance(TEST_ACCOUNTS[0].address);
-    const balance2 = await client.getBalance(TEST_ACCOUNTS[0].address);
+    const balance1 = await client.getBalance(PRIMARY_ACCOUNT.address);
+    const balance2 = await client.getBalance(PRIMARY_ACCOUNT.address);
 
     expect(balance1).toBe(balance2);
   });
 
   it('funded client address matches expected', () => {
-    expect(fundedClient.getAddress()?.toLowerCase()).toBe(TEST_ACCOUNTS[0].address.toLowerCase());
+    expect(fundedClient.getAddress()?.toLowerCase()).toBe(PRIMARY_ACCOUNT.address.toLowerCase());
   });
 });
 

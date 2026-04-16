@@ -7,8 +7,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "jest --testPathIgnorePatterns=tests/integration",
-    "test:unit": "jest --testPathIgnorePatterns=tests/integration",
+    "test": "jest --passWithNoTests --testPathIgnorePatterns=tests/integration",
+    "test:unit": "jest --passWithNoTests --testPathIgnorePatterns=tests/integration",
     "test:integration": "jest --testMatch='**/tests/integration/**/*.test.ts' --runInBand --testTimeout=120000",
     "test:integration:testnet": "CITRATE_RPC_URL=http://localhost:8545 CITRATE_CHAIN_ID=40204 npm run test:integration",
     "test:all": "jest --testTimeout=120000",
