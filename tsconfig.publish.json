@@ -1,0 +1,14 @@
+{
+  "//": "RM-G2.6 / audit SDK-03 + SUP-11 — npm-publish tsconfig.",
+  "//1": "Extends the dev tsconfig.json with `sourceMap` and `declarationMap`",
+  "//2": "set to false. Source maps point at filesystem paths from the build",
+  "//3": "host; shipping them to npm leaks operator usernames + checkout paths",
+  "//4": "every install. Local `npm run build` keeps the maps for IDE tooling.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "sourceMap": false,
+    "declarationMap": false,
+    "inlineSourceMap": false,
+    "inlineSources": false
+  }
+}

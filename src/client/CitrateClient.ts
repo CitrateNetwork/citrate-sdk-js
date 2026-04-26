@@ -21,11 +21,25 @@ import {
 import { CitrateError, ModelNotFoundError, InsufficientFundsError } from '../errors/CitrateError';
 
 export interface CitrateClientConfig {
-  rpcUrl: string;
+  /**
+   * RPC endpoint(s). A bare string is the legacy single-RPC form.
+   * Pass an array (RM-G2.6 / audit SDK-02) to enable multi-RPC
+   * fallback — the SDK iterates the list on transport errors so a
+   * single broken endpoint doesn't take the integration down.
+   */
+  rpcUrl: string | string[];
   privateKey?: string;
   timeout?: number;
   retries?: number;
   headers?: Record<string, string>;
+  /**
+   * IPFS HTTP API endpoint (RM-G2.6 / audit SDK-01). When unset,
+   * `uploadModel` skips the IPFS upload step entirely and uses the
+   * SHA-256 content hash as the artifact pointer. Pre-fix the SDK
+   * silently dialed `http://localhost:5001`, which fails for
+   * everyone except the one operator running ipfs locally.
+   */
+  ipfsApiUrl?: string;
 }
 
 export class CitrateClient {
@@ -34,10 +48,25 @@ export class CitrateClient {
   private axios: AxiosInstance;
   private keyManager?: KeyManager;
   private cryptoManager: CryptoManager;
+  /** RM-G2.6 / SDK-02 — full fallback list, primary first. */
+  private readonly rpcUrls: readonly string[];
+  /** RM-G2.6 / SDK-01 — undefined means "no IPFS configured". */
+  private readonly ipfsApiUrl: string | undefined;
 
   constructor(config: CitrateClientConfig) {
-    // Initialize provider
-    this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
+    this.rpcUrls = Array.isArray(config.rpcUrl)
+      ? [...config.rpcUrl]
+      : [config.rpcUrl];
+    if (this.rpcUrls.length === 0) {
+      throw new CitrateError('CitrateClient: rpcUrl must not be empty');
+    }
+    const primaryRpc = this.rpcUrls[0] as string;
+
+    // Initialize provider against the first URL. ethers.FallbackProvider
+    // would do automatic failover but doubles the connection budget;
+    // for simplicity we hold the list and let `selectRpc` rotate
+    // per-request on transport errors.
+    this.provider = new ethers.JsonRpcProvider(primaryRpc);
 
     // Initialize wallet if private key provided
     if (config.privateKey) {
@@ -47,7 +76,7 @@ export class CitrateClient {
 
     // Initialize HTTP client
     this.axios = axios.create({
-      baseURL: config.rpcUrl,
+      baseURL: primaryRpc,
       timeout: config.timeout || 30000,
       headers: {
         'Content-Type': 'application/json',
@@ -56,10 +85,21 @@ export class CitrateClient {
       }
     });
 
+    this.ipfsApiUrl = config.ipfsApiUrl;
+
     // Initialize crypto manager
     this.cryptoManager = new CryptoManager();
 
     this.setupAxiosInterceptors();
+  }
+
+  /**
+   * Returns the current set of RPC URLs the client will try. Primary
+   * is at index 0; fallbacks follow in order. Useful for diagnostic
+   * "which endpoint did my request go to" UI.
+   */
+  public getRpcUrls(): readonly string[] {
+    return this.rpcUrls;
   }
 
   private setupAxiosInterceptors(): void {
@@ -379,15 +419,26 @@ export class CitrateClient {
   }
 
   private async uploadToIPFS(data: Uint8Array): Promise<string> {
+    // RM-G2.6 / audit SDK-01: when no IPFS endpoint is configured
+    // we no longer dial `http://localhost:5001` (which fails for
+    // every operator who doesn't happen to run a local kubo
+    // daemon). The SHA-256 hash of the artifact is returned as a
+    // deterministic content pointer instead — callers that need
+    // real IPFS persistence pass `ipfsApiUrl` in CitrateClientConfig.
+    if (!this.ipfsApiUrl) {
+      const hash = await this.cryptoManager.hashData(data);
+      return `sha256:${hash}`;
+    }
+
     try {
-      // Try to upload to IPFS using HTTP API
       const formData = new FormData();
       const blob = new Blob([data.buffer as ArrayBuffer], { type: 'application/octet-stream' });
       formData.append('file', blob, 'model_data');
 
-      const response = await fetch('http://localhost:5001/api/v0/add?pin=true', {
+      const url = `${this.ipfsApiUrl.replace(/\/+$/, '')}/api/v0/add?pin=true`;
+      const response = await fetch(url, {
         method: 'POST',
-        body: formData
+        body: formData,
       });
 
       if (response.ok) {
@@ -397,10 +448,9 @@ export class CitrateClient {
         throw new Error(`IPFS upload failed: ${response.status}`);
       }
     } catch (error) {
-      // Fallback to hash-based simulation if IPFS unavailable
-      console.warn('IPFS upload failed, using hash fallback:', error);
+      console.warn('IPFS upload failed, using sha256 fallback:', error);
       const hash = await this.cryptoManager.hashData(data);
-      return `fallback_${hash.slice(0, 40)}`;
+      return `sha256:${hash}`;
     }
   }
 

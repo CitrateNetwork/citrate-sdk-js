@@ -8,8 +8,15 @@ export const CHAIN_IDS = {
   TESTNET: 40204,   // Testnet beta (rpc.citrate.ai)
 } as const;
 
-export const DEFAULT_RPC_URLS: Record<number, string> = {
-  [CHAIN_IDS.TESTNET]: 'https://rpc.citrate.ai',
+// RM-G2.6 / audit SDK-02: array shape so callers can pass the full
+// list straight to `CitrateClientConfig.rpcUrl` for multi-RPC
+// fallback. Pre-fix this was a single string per chain — a broken
+// `rpc.citrate.ai` took every integration down with it.
+export const DEFAULT_RPC_URLS: Record<number, string[]> = {
+  [CHAIN_IDS.TESTNET]: [
+    'https://rpc.citrate.ai',
+    // Add backup endpoints here as they come online.
+  ],
 };
 
 export const DEFAULT_WS_URLS: Record<number, string> = {
