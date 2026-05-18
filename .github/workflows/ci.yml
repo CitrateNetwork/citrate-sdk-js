@@ -1,0 +1,13 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  js:
+    if: hashFiles('package.json') != ''
+    uses: CitrateNetwork/.github/.github/workflows/reusable-js-ci.yml@main
