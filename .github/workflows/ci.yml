@@ -9,5 +9,4 @@ permissions:
 
 jobs:
   js:
-    if: hashFiles('package.json') != ''
     uses: CitrateNetwork/.github/.github/workflows/reusable-js-ci.yml@main
