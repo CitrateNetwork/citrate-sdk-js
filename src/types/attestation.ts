@@ -70,6 +70,7 @@ export function parseAttestationRejection(
   );
   if (!match) return null;
   const [, gate, reason] = match;
+  if (!gate || !reason) return null;
   return {
     gate: gate as AttestationGateName,
     reason: reason.trim(),
