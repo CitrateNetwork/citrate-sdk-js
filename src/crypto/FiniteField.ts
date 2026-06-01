@@ -3,6 +3,30 @@
  * Uses irreducible polynomial x^8 + x^4 + x^3 + x + 1 (0x11b)
  */
 
+/**
+ * Cryptographically secure random bytes via Web Crypto `getRandomValues`.
+ *
+ * FAIL-CLOSED: throws if no CSPRNG is available rather than silently degrading
+ * to a predictable source. Shamir's information-theoretic secrecy depends on the
+ * non-constant polynomial coefficients being drawn from a CSPRNG; `Math.random`
+ * (V8 xorshift128+) is predictable and recoverable, which would let an attacker
+ * reconstruct the secret from fewer than `threshold` shares.
+ * Audit: CITRATE_SDK_JS-2026-05-31-001 (CRITICAL).
+ */
+function secureRandomBytes(length: number): Uint8Array {
+  const c = (globalThis as { crypto?: Crypto }).crypto;
+  if (!c || typeof c.getRandomValues !== 'function') {
+    throw new Error(
+      'Shamir secret sharing requires a cryptographically secure RNG ' +
+        '(Web Crypto getRandomValues), which is unavailable in this runtime. ' +
+        'Refusing to generate share coefficients with a non-cryptographic source.',
+    );
+  }
+  const out = new Uint8Array(length);
+  c.getRandomValues(out);
+  return out;
+}
+
 export class GF256 {
   private static expTable: number[] = [];
   private static logTable: number[] = [];
@@ -143,11 +167,31 @@ export class ShamirSecretSharing {
    * Split secret into shares
    */
   splitSecret(secret: Uint8Array): Array<{ x: number; y: Uint8Array }> {
-    const shares: Array<{ x: number; y: Uint8Array }> = [];
+    // Build ONE random polynomial per secret byte, coefficients drawn from a
+    // CSPRNG. The coefficients are fixed once and reused across every share:
+    // all shares MUST lie on the same polynomial or reconstruction is
+    // impossible. (Audit CITRATE_SDK_JS-2026-05-31-001 — CSPRNG coefficients —
+    // and the coupled reconstruct-correctness fix: the prior code regenerated
+    // fresh coefficients per share, putting each share on a different
+    // polynomial, so reconstruction never recovered the secret.)
+    const degree = Math.max(0, this.threshold - 1);
+    const polynomials: number[][] = [];
+    for (const secretByte of secret) {
+      const coefficients: number[] = [secretByte];
+      const randomCoeffs = secureRandomBytes(degree);
+      for (let i = 0; i < randomCoeffs.length; i++) {
+        coefficients.push(randomCoeffs[i]!);
+      }
+      polynomials.push(coefficients);
+    }
 
-    for (let i = 1; i <= this.totalShares; i++) {
-      const shareBytes = this.evaluatePolynomialAtPoint(secret, i);
-      shares.push({ x: i, y: shareBytes });
+    const shares: Array<{ x: number; y: Uint8Array }> = [];
+    for (let x = 1; x <= this.totalShares; x++) {
+      const shareBytes = new Uint8Array(polynomials.length);
+      for (let b = 0; b < polynomials.length; b++) {
+        shareBytes[b] = ShamirSecretSharing.evaluatePolynomial(polynomials[b]!, x);
+      }
+      shares.push({ x, y: shareBytes });
     }
 
     return shares;
@@ -189,31 +233,19 @@ export class ShamirSecretSharing {
   }
 
   /**
-   * Evaluate polynomial at point x for each byte of the secret
+   * Evaluate a GF(2^8) polynomial (coefficients given low-order first, i.e.
+   * `[a0, a1, a2, ...]` for `a0 + a1·x + a2·x² + …`) at point `x` via Horner-
+   * style accumulation. Pure: no randomness, so a polynomial evaluates
+   * identically at every share point.
    */
-  private evaluatePolynomialAtPoint(secret: Uint8Array, x: number): Uint8Array {
-    const shareBytes: number[] = [];
-
-    for (const secretByte of secret) {
-      // Generate random coefficients (except a0 which is the secret)
-      const coefficients: number[] = [secretByte];
-      for (let i = 1; i < this.threshold; i++) {
-        coefficients.push(Math.floor(Math.random() * 256));
-      }
-
-      // Evaluate polynomial at x
-      let result = 0;
-      let xPower = 1;
-
-      for (const coeff of coefficients) {
-        result = GF256.add(result, GF256.multiply(coeff, xPower));
-        xPower = GF256.multiply(xPower, x);
-      }
-
-      shareBytes.push(result);
+  private static evaluatePolynomial(coefficients: number[], x: number): number {
+    let result = 0;
+    let xPower = 1;
+    for (const coeff of coefficients) {
+      result = GF256.add(result, GF256.multiply(coeff, xPower));
+      xPower = GF256.multiply(xPower, x);
     }
-
-    return new Uint8Array(shareBytes);
+    return result;
   }
 
   /**

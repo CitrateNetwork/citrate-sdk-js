@@ -95,7 +95,10 @@ export class KeyManager {
       nonce: this.cryptoManager.bytesToHex(encrypted.nonce),
       keyDerivation,
       encryptedKey,
-      accessControl: config?.accessControl || true
+      // Use nullish coalescing: `|| true` coerced an explicit `false` to `true`,
+      // so callers could not disable access control and the metadata misreported
+      // the caller's choice. Audit: CITRATE_SDK_JS-B-2026-05-31-003.
+      accessControl: config?.accessControl ?? true
     };
 
     // Add threshold sharing if enabled
@@ -208,14 +211,22 @@ export class KeyManager {
    * Encrypt key for model owner
    */
   private async encryptKeyForOwner(key: Uint8Array): Promise<string> {
-    const ownerKey = await this.cryptoManager.hashData(
-      this.cryptoManager.hexToBytes(this.wallet.privateKey.slice(2))
+    // Derive the owner-wrap key with a salted, iterated KDF (PBKDF2-SHA256) +
+    // domain separation. The previous derivation was a single unsalted
+    // SHA-256(privateKey) — deterministic and globally reusable across every
+    // wrapped key. Audit: CITRATE_SDK_JS-2026-05-31-002 (HIGH).
+    const salt = this.cryptoManager.generateRandomBytes(16);
+    const ownerKeyBytes = await this.cryptoManager.deriveKey(
+      `citrate-model-key-wrap-v1:${this.wallet.privateKey}`,
+      salt
     );
-    const ownerKeyBytes = this.cryptoManager.hexToBytes(ownerKey);
 
     const encrypted = await this.cryptoManager.encryptAES(key, ownerKeyBytes);
 
     return JSON.stringify({
+      v: 2,
+      kdf: 'pbkdf2-sha256',
+      salt: this.cryptoManager.bytesToHex(salt),
       encryptedKey: this.cryptoManager.bytesToHex(encrypted.ciphertext),
       nonce: this.cryptoManager.bytesToHex(encrypted.nonce),
       authTag: this.cryptoManager.bytesToHex(encrypted.authTag)
@@ -228,10 +239,21 @@ export class KeyManager {
   private async decryptKeyFromOwner(encryptedKeyPackage: string): Promise<Uint8Array> {
     const package_ = JSON.parse(encryptedKeyPackage);
 
-    const ownerKey = await this.cryptoManager.hashData(
-      this.cryptoManager.hexToBytes(this.wallet.privateKey.slice(2))
-    );
-    const ownerKeyBytes = this.cryptoManager.hexToBytes(ownerKey);
+    let ownerKeyBytes: Uint8Array;
+    if (typeof package_.salt === 'string' && package_.salt.length > 0) {
+      // v2: salted PBKDF2 derivation (current). Audit CITRATE_SDK_JS-...-002.
+      ownerKeyBytes = await this.cryptoManager.deriveKey(
+        `citrate-model-key-wrap-v1:${this.wallet.privateKey}`,
+        this.cryptoManager.hexToBytes(package_.salt)
+      );
+    } else {
+      // v1 legacy: unsalted SHA-256(privateKey). Retained read-only so packages
+      // wrapped before the KDF hardening can still be decrypted (no regression).
+      const legacyKey = await this.cryptoManager.hashData(
+        this.cryptoManager.hexToBytes(this.wallet.privateKey.slice(2))
+      );
+      ownerKeyBytes = this.cryptoManager.hexToBytes(legacyKey);
+    }
 
     const encryptedKey = this.cryptoManager.hexToBytes(package_.encryptedKey);
     const nonce = this.cryptoManager.hexToBytes(package_.nonce);
