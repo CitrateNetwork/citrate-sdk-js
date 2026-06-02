@@ -6,6 +6,12 @@ import { ethers } from 'ethers';
 import { CryptoManager } from './CryptoManager';
 import { splitSecretBytes, reconstructSecretBytes } from './FiniteField';
 import { EncryptionConfig } from '../types/Model';
+import { CitrateError } from '../errors/CitrateError';
+
+/// RM-G.3 — envelope scheme tag for the ECDH-wrapped format (the JS twin
+/// of SDK_PYTHON-001). The symmetric key is ECDH-wrapped to the recipient
+/// and never shipped beside the ciphertext.
+const ECDH_SCHEME_V1 = 'ecdh-secp256k1-aesgcm-v1';
 
 export interface EncryptedModelResult {
   encryptedData: Uint8Array;
@@ -152,24 +158,46 @@ export class KeyManager {
   /**
    * Encrypt arbitrary data
    */
-  async encryptData(data: string): Promise<string> {
+  async encryptData(data: string, recipientPublicKey?: string): Promise<string> {
+    // RM-G.3 / SDK_JS encryptData: the previous envelope shipped the raw AES
+    // key beside the ciphertext — zero confidentiality once the envelope
+    // lands on public inference calldata. A recipient public key is now
+    // REQUIRED; the key is ECDH-wrapped to it and never appears raw. With no
+    // recipient we fail closed rather than fabricate confidentiality.
+    if (!recipientPublicKey) {
+      throw new CitrateError(
+        'encryptData requires recipientPublicKey: the symmetric key is ECDH-wrapped ' +
+          'to the recipient and never shipped in cleartext (SDK_JS encryptData fix).'
+      );
+    }
     const dataBytes = this.cryptoManager.stringToBytes(data);
     const key = this.cryptoManager.generateRandomBytes(32);
 
     const encrypted = await this.cryptoManager.encryptAES(dataBytes, key);
 
+    // ECDH-wrap the symmetric key to the recipient. shared =
+    // HKDF/SHA256(ECDH(sender_priv, recipient_pub)); the recipient re-derives
+    // the same secret from its own key + senderPublicKey.
+    const shared = await this.deriveSharedKey(recipientPublicKey);
+    const wrapped = await this.cryptoManager.encryptAES(key, shared);
+
     const package_ = {
+      scheme: ECDH_SCHEME_V1,
       ciphertext: this.cryptoManager.bytesToHex(encrypted.ciphertext),
       nonce: this.cryptoManager.bytesToHex(encrypted.nonce),
       authTag: this.cryptoManager.bytesToHex(encrypted.authTag),
-      key: this.cryptoManager.bytesToHex(key)
+      wrappedKey: this.cryptoManager.bytesToHex(wrapped.ciphertext),
+      wrapNonce: this.cryptoManager.bytesToHex(wrapped.nonce),
+      wrapAuthTag: this.cryptoManager.bytesToHex(wrapped.authTag),
+      senderPublicKey: this.getPublicKey()
     };
 
     return JSON.stringify(package_);
   }
 
   /**
-   * Decrypt arbitrary data
+   * Decrypt arbitrary data. Supports the ECDH-wrapped envelope and, for
+   * backward-compatible READS only, the legacy cleartext-key envelope.
    */
   async decryptData(encryptedPackage: string): Promise<string> {
     const package_ = JSON.parse(encryptedPackage);
@@ -177,7 +205,23 @@ export class KeyManager {
     const ciphertext = this.cryptoManager.hexToBytes(package_.ciphertext);
     const nonce = this.cryptoManager.hexToBytes(package_.nonce);
     const authTag = this.cryptoManager.hexToBytes(package_.authTag);
-    const key = this.cryptoManager.hexToBytes(package_.key);
+
+    let key: Uint8Array;
+    if (package_.wrappedKey) {
+      // ECDH-wrapped: re-derive the shared secret from the sender's pubkey.
+      const shared = await this.deriveSharedKey(package_.senderPublicKey);
+      key = await this.cryptoManager.decryptAES(
+        this.cryptoManager.hexToBytes(package_.wrappedKey),
+        shared,
+        this.cryptoManager.hexToBytes(package_.wrapNonce),
+        this.cryptoManager.hexToBytes(package_.wrapAuthTag)
+      );
+    } else if (package_.key) {
+      // Legacy insecure envelope — read for back-compat, never produced.
+      key = this.cryptoManager.hexToBytes(package_.key);
+    } else {
+      throw new CitrateError('unrecognized encrypted envelope (no wrappedKey/key)');
+    }
 
     const decrypted = await this.cryptoManager.decryptAES(ciphertext, key, nonce, authTag);
     return this.cryptoManager.bytesToString(decrypted);

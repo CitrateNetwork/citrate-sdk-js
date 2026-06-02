@@ -233,9 +233,14 @@ export class CitrateClient {
     // Prepare inference data
     let inputData: any = request.inputData;
 
-    // Encrypt input if requested
+    // Encrypt input if requested. RM-G.3: the symmetric key is ECDH-wrapped
+    // to recipientPublicKey (the model/recipient key) and never shipped raw;
+    // encryptData fails closed if no recipient key is supplied.
     if (request.encrypted && this.keyManager) {
-      inputData = await this.keyManager.encryptData(JSON.stringify(request.inputData));
+      inputData = await this.keyManager.encryptData(
+        JSON.stringify(request.inputData),
+        request.recipientPublicKey
+      );
     }
 
     const inferenceData = {

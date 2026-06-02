@@ -6,6 +6,10 @@ export interface InferenceRequest {
   modelId: string;
   inputData: Record<string, any>;
   encrypted?: boolean;
+  /// RM-G.3: REQUIRED when `encrypted` is true — the model/recipient public
+  /// key (hex) the symmetric key is ECDH-wrapped to. Without it the encrypted
+  /// path fails closed; the SDK will not ship a key in cleartext.
+  recipientPublicKey?: string;
   batchSize?: number;
   timeout?: number;
   timestamp?: number;
