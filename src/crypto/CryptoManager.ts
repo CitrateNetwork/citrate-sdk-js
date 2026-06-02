@@ -13,6 +13,11 @@
  *     Node < 16, neither of which the SDK supports.
  */
 
+/// RM-G.7 — default PBKDF2-HMAC-SHA256 iteration count. The previous default
+/// (10,000) was far below current guidance; OWASP recommends >= 600,000 for
+/// PBKDF2-SHA256. Callers that need a different work factor pass it explicitly.
+export const PBKDF2_DEFAULT_ITERATIONS = 600_000;
+
 function ensureWebCrypto(): SubtleCrypto {
   const c = (globalThis as { crypto?: Crypto }).crypto;
   if (!c || !c.subtle) {
@@ -113,7 +118,7 @@ export class CryptoManager {
   async deriveKey(
     password: string,
     salt: Uint8Array,
-    iterations = 10000,
+    iterations = PBKDF2_DEFAULT_ITERATIONS,
   ): Promise<Uint8Array> {
     const subtle = ensureWebCrypto();
     const passwordBytes = new TextEncoder().encode(password);
