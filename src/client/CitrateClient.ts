@@ -18,7 +18,15 @@ import {
   BatchInferenceRequest,
   BatchInferenceResult
 } from '../types/Inference';
-import { CitrateError, ModelNotFoundError, InsufficientFundsError } from '../errors/CitrateError';
+import { CitrateError, ModelNotFoundError, InsufficientFundsError, ValidationError } from '../errors/CitrateError';
+import {
+  validateInferenceRequest,
+  validateModelConfig,
+  validateModelData,
+  validatePrivateKey,
+  validateRpcUrl
+} from '../utils/validation';
+import { PRECOMPILE_ADDRESSES } from '../utils/constants';
 
 export interface CitrateClientConfig {
   /**
@@ -59,6 +67,17 @@ export class CitrateClient {
       : [config.rpcUrl];
     if (this.rpcUrls.length === 0) {
       throw new CitrateError('CitrateClient: rpcUrl must not be empty');
+    }
+    // SECREM-02 5.4 (audit CITRATE_SDK_JS-2026-05-31-003): the exported
+    // validators were dead code — wire them at the trust boundary, before
+    // any provider/wallet is constructed.
+    for (const url of this.rpcUrls) {
+      if (!validateRpcUrl(url)) {
+        throw new ValidationError(`CitrateClient: invalid RPC URL: ${url}`);
+      }
+    }
+    if (config.privateKey !== undefined && !validatePrivateKey(config.privateKey)) {
+      throw new ValidationError('CitrateClient: invalid private key format');
     }
     const primaryRpc = this.rpcUrls[0] as string;
 
@@ -162,6 +181,11 @@ export class CitrateClient {
       throw new CitrateError('Wallet required for model deployment');
     }
 
+    // SECREM-02 5.4 (audit CITRATE_SDK_JS-2026-05-31-003): enforce the
+    // advertised bounds before any wallet/provider activity.
+    validateModelData(modelData);
+    validateModelConfig(config);
+
     // Convert to Uint8Array if needed
     const modelBytes = modelData instanceof ArrayBuffer
       ? new Uint8Array(modelData)
@@ -174,7 +198,15 @@ export class CitrateClient {
     let encryptedData: Uint8Array = modelBytes;
     let encryptionMetadata: any = null;
 
-    if (config.encrypted && this.keyManager) {
+    if (config.encrypted) {
+      // SECREM-02 5.4 (FUA-SDK-JS-01 class): encryption requested must
+      // never silently downgrade to a plaintext upload.
+      if (!this.keyManager) {
+        throw new CitrateError(
+          'deployModel: config.encrypted is true but no private key/KeyManager ' +
+            'is configured — refusing to upload the model in plaintext.'
+        );
+      }
       const result = await this.keyManager.encryptModel(modelBytes, config.encryptionConfig);
       encryptedData = result.encryptedData;
       encryptionMetadata = result.metadata;
@@ -197,9 +229,10 @@ export class CitrateClient {
       txData.metadata.encryption = encryptionMetadata;
     }
 
-    // Deploy to blockchain (call precompile at 0x0100)
+    // Deploy to blockchain — canonical INFERENCE_DEPLOY precompile from
+    // constants (audit -004: no hardcoded address literals in the client).
     const tx = await this.wallet.sendTransaction({
-      to: '0x0100000000000000000000000000000000000100',
+      to: PRECOMPILE_ADDRESSES.INFERENCE_DEPLOY,
       data: ethers.hexlify(ethers.toUtf8Bytes(JSON.stringify(txData))),
       gasLimit: 500000n
     });
@@ -230,13 +263,26 @@ export class CitrateClient {
       throw new CitrateError('Wallet required for inference execution');
     }
 
+    // SECREM-02 5.4 (audit CITRATE_SDK_JS-2026-05-31-003): enforce the
+    // advertised bounds before any wallet/provider activity.
+    validateInferenceRequest(request);
+
     // Prepare inference data
     let inputData: any = request.inputData;
 
     // Encrypt input if requested. RM-G.3: the symmetric key is ECDH-wrapped
     // to recipientPublicKey (the model/recipient key) and never shipped raw;
     // encryptData fails closed if no recipient key is supplied.
-    if (request.encrypted && this.keyManager) {
+    if (request.encrypted) {
+      // SECREM-02 5.4 (FUA-SDK-JS-01 class): when encryption is requested
+      // it must be applied or the call must die — never a silent plaintext
+      // downgrade onto public calldata.
+      if (!this.keyManager) {
+        throw new CitrateError(
+          'inference: request.encrypted is true but no private key/KeyManager ' +
+            'is configured — refusing to send the input in plaintext.'
+        );
+      }
       inputData = await this.keyManager.encryptData(
         JSON.stringify(request.inputData),
         request.recipientPublicKey
@@ -250,10 +296,11 @@ export class CitrateClient {
       timestamp: request.timestamp || Math.floor(Date.now() / 1000)
     };
 
-    // Execute inference (call precompile at 0x0101)
+    // Execute inference — canonical INFERENCE_RUN precompile from
+    // constants (audit -004: no hardcoded address literals in the client).
     const startTime = Date.now();
     const tx = await this.wallet.sendTransaction({
-      to: '0x0100000000000000000000000000000000000101',
+      to: PRECOMPILE_ADDRESSES.INFERENCE_RUN,
       data: ethers.hexlify(ethers.toUtf8Bytes(JSON.stringify(inferenceData))),
       gasLimit: BigInt(request.timeout || 1000000)
     });
@@ -286,6 +333,40 @@ export class CitrateClient {
 
   // Batch inference
   async batchInference(request: BatchInferenceRequest): Promise<BatchInferenceResult> {
+    // SECREM-02 5.4 (FUA-SDK-JS-01): batch carries the exact same
+    // confidentiality contract as single-call inference. Fail closed up
+    // front — before any transaction leaves — if encryption is requested
+    // but cannot be applied. Never silently downgrade to plaintext.
+    if (request.encrypted) {
+      if (!this.keyManager) {
+        throw new CitrateError(
+          'batchInference: request.encrypted is true but no private key/KeyManager ' +
+            'is configured — refusing to send batch inputs in plaintext.'
+        );
+      }
+      if (!request.recipientPublicKey) {
+        throw new CitrateError(
+          'batchInference requires recipientPublicKey when encrypted: the ' +
+            'symmetric key is ECDH-wrapped to the recipient and never shipped ' +
+            'in cleartext (mirrors the single-call inference contract).'
+        );
+      }
+    }
+
+    // SECREM-02 5.4 (audit CITRATE_SDK_JS-2026-05-31-003): validate every
+    // input before the first transaction is sent, so an invalid batch
+    // throws instead of half-broadcasting.
+    for (const input of request.inputs) {
+      const probe: InferenceRequest = {
+        modelId: request.modelId,
+        inputData: input
+      };
+      if (request.batchSize !== undefined) {
+        probe.batchSize = request.batchSize;
+      }
+      validateInferenceRequest(probe);
+    }
+
     const results: InferenceResult[] = [];
     const errors: string[] = [];
     let totalGasUsed = 0n;
@@ -299,10 +380,19 @@ export class CitrateClient {
 
       const batchPromises = batch.map(async (input, index) => {
         try {
-          const result = await this.inference({
+          // FUA-SDK-JS-01: thread the encryption contract into every
+          // per-input call so batch encrypts exactly like single calls.
+          const single: InferenceRequest = {
             modelId: request.modelId,
             inputData: input
-          });
+          };
+          if (request.encrypted !== undefined) {
+            single.encrypted = request.encrypted;
+          }
+          if (request.recipientPublicKey !== undefined) {
+            single.recipientPublicKey = request.recipientPublicKey;
+          }
+          const result = await this.inference(single);
           results.push(result);
           totalGasUsed += result.gasUsed;
           totalExecutionTime += result.executionTime;
@@ -387,24 +477,24 @@ export class CitrateClient {
   }
 
   // Payment
-  async purchaseModelAccess(modelId: string, paymentAmount: bigint): Promise<string> {
-    if (!this.wallet) {
-      throw new CitrateError('Wallet required for purchases');
-    }
-
-    const txData = {
-      modelId,
-      paymentAmount: paymentAmount.toString()
-    };
-
-    const tx = await this.wallet.sendTransaction({
-      to: '0x0100000000000000000000000000000000000104', // Access control precompile
-      data: ethers.hexlify(ethers.toUtf8Bytes(JSON.stringify(txData))),
-      value: paymentAmount,
-      gasLimit: 200000n
-    });
-
-    return tx.hash;
+  //
+  // SECREM-02 5.4 (audit CITRATE_SDK_JS-2026-05-31-004, HIGH): this method
+  // used to send buyer `value` to the literal 0x..0104 — which the canonical
+  // table (constants.PRECOMPILE_ADDRESSES.INFERENCE_VERIFY) and the node
+  // (`core/execution/src/precompiles/inference.rs addresses::PROOF_VERIFY`)
+  // both define as proof verification, NOT access purchase. The node's
+  // dispatch table has no access-purchase precompile at all, so any value
+  // sent here is misrouted: access is never granted and the funds are never
+  // credited to the model. Fail closed — refuse to move money — until a
+  // node-confirmed access-purchase precompile exists.
+  async purchaseModelAccess(modelId: string, _paymentAmount: bigint): Promise<string> {
+    throw new CitrateError(
+      `purchaseModelAccess('${modelId}') is disabled (fail-closed): the canonical ` +
+        'precompile table has no access-purchase operation; the previous ' +
+        'implementation routed buyer funds to the INFERENCE_VERIFY precompile ' +
+        '(0x..0104) where access was never granted and value was never credited ' +
+        '(audit CITRATE_SDK_JS-2026-05-31-004).'
+    );
   }
 
   // Private helper methods
