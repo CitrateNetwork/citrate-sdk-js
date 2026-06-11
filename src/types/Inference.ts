@@ -53,6 +53,14 @@ export interface InferenceJob {
 export interface BatchInferenceRequest {
   modelId: string;
   inputs: Array<Record<string, any>>;
+  /// FUA-SDK-JS-01: batch carries the exact same confidentiality contract
+  /// as a single `inference()` call — when true, every batched input is
+  /// ECDH-encrypted to `recipientPublicKey` before it touches calldata.
+  encrypted?: boolean;
+  /// FUA-SDK-JS-01: REQUIRED when `encrypted` is true (mirrors
+  /// InferenceRequest.recipientPublicKey). Without it the batch fails
+  /// closed before any transaction is sent.
+  recipientPublicKey?: string;
   batchSize?: number;
   parallel?: boolean;
   onProgress?: (completed: number, total: number) => void;
