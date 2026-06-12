@@ -34,3 +34,5 @@ export * from './utils/validation';
 
 // Version
 export const VERSION = '0.1.1';
+// Embedded wallet (ERC-4337 v0.7 / Kernel v3) — EW-S1 WP-7
+export * as aa from './aa';
