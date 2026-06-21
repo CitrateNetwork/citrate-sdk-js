@@ -10,3 +10,17 @@ permissions:
 jobs:
   js:
     uses: CitrateNetwork/.github/.github/workflows/reusable-js-ci.yml@main
+
+  # FWA-C12-01 supply-chain tripwire: publish-name drift + publishConfig gate.
+  # Fails the build if package.json#name drifts from the reserved set in
+  # PUBLISH_NAMES.json (the in-repo mirror of the federation manifest
+  # [repos.citrate-sdk-js].publishes) or if publishConfig is dropped.
+  publish-names:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Publish-name drift gate
+        run: node scripts/check-publish-names.mjs

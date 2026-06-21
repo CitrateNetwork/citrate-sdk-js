@@ -4,6 +4,10 @@
   "description": "Canonical TypeScript/JavaScript SDK for the Citrate distributed AI network. This is the canonical SDK \u2014 all other language SDKs are non-canonical until a real pilot integrator requires parity.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
     "build": "tsc",
     "build:publish": "tsc -p tsconfig.publish.json",
@@ -16,7 +20,8 @@
     "test:watch": "jest --watch",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write src/**/*.ts",
-    "prepublishOnly": "npm run build:publish"
+    "verify:publish-names": "node scripts/check-publish-names.mjs",
+    "prepublishOnly": "npm run verify:publish-names && npm run build:publish"
   },
   "keywords": [
     "citrate",
