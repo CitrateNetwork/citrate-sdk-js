@@ -11,10 +11,20 @@ jobs:
   js:
     uses: CitrateNetwork/.github/.github/workflows/reusable-js-ci.yml@main
 
-  # FWA-C12-01 supply-chain tripwire: publish-name drift + publishConfig gate.
-  # Fails the build if package.json#name drifts from the reserved set in
-  # PUBLISH_NAMES.json (the in-repo mirror of the federation manifest
-  # [repos.citrate-sdk-js].publishes) or if publishConfig is dropped.
+  # FWA-C12-01 + FWA-BV-SDK-01 supply-chain tripwire: publish-name drift +
+  # publishConfig (access + registry) gate. Fails the build if:
+  #   - package.json#name drifts from the reserved set in PUBLISH_NAMES.json
+  #     (the in-repo mirror of the federation manifest [repos.citrate-sdk-js]),
+  #   - publishConfig.access is dropped, or
+  #   - publishConfig.registry is repointed away from the canonical registry
+  #     host recorded in PUBLISH_NAMES.json#registry (registry-drift exfil).
+  #
+  # FWA-BV-SDK-02: this job is the AUTHORITATIVE enforcement of the gate. The
+  # `prepublishOnly` npm hook is client-side and is silently skipped by
+  # `npm publish --ignore-scripts`; this CI job runs the gate independently of
+  # any npm lifecycle hook (it invokes the script directly, not via `npm
+  # publish`) and is a hard `needs:` precondition for the release/publish job
+  # in release.yml. It is therefore not bypassable by `--ignore-scripts`.
   publish-names:
     runs-on: ubuntu-latest
     steps:
@@ -22,5 +32,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Publish-name drift gate
+      - name: Publish-name + registry drift gate (FWA-C12-01 / BV-SDK-01)
         run: node scripts/check-publish-names.mjs

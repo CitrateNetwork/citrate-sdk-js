@@ -10,6 +10,11 @@
  *   2. publishConfig is present with an explicit `access` so the package
  *      never falls back to an ambiguous default publish target
  *      (dependency-confusion hardening — WEB-5 / FWA-C12-01).
+ *   3. publishConfig.registry resolves to the canonical registry host
+ *      recorded in PUBLISH_NAMES.json#registry. A repointed registry
+ *      (e.g. https://evil.example/) is rejected, closing the registry-drift
+ *      exfiltration hole (FWA-BV-SDK-01). The recorded value is compared on
+ *      normalized host so "npmjs.org" matches "https://registry.npmjs.org/".
  *
  * Exit 0 on pass, exit 1 with a diagnostic on any drift. This is the
  * permanent CI gate; the jest test wraps the same checks so it runs in the
@@ -21,6 +26,27 @@ import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
+
+/**
+ * Normalize a registry value to a bare lowercase host for comparison.
+ * Accepts either a bare host ("npmjs.org") or a full URL
+ * ("https://registry.npmjs.org/"). Strips a leading "registry." label so the
+ * canonical "npmjs.org" reservation matches the conventional
+ * "registry.npmjs.org" publish endpoint. Returns null if unparseable.
+ */
+export function normalizeRegistryHost(value) {
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  let host;
+  try {
+    // If it parses as a URL, use the hostname; otherwise treat as bare host.
+    host = new URL(value).hostname;
+  } catch {
+    host = value.replace(/^[a-z]+:\/\//i, '').split('/')[0].split(':')[0];
+  }
+  host = host.toLowerCase().replace(/\.$/, '');
+  if (host === '') return null;
+  return host.replace(/^registry\./, '');
+}
 
 export function checkPublishNames(root = repoRoot) {
   const errors = [];
@@ -49,12 +75,48 @@ export function checkPublishNames(root = repoRoot) {
     );
   }
 
+  // FWA-BV-SDK-01: the registry must resolve to the canonical host recorded in
+  // PUBLISH_NAMES.json#registry. A drifted/missing registry (e.g. a repointed
+  // https://evil.example/) is a publish-exfiltration vector and is rejected.
+  const expectedRegistry = reservation.registry;
+  const expectedHost = normalizeRegistryHost(expectedRegistry);
+  if (!expectedHost) {
+    errors.push(
+      'PUBLISH_NAMES.json#registry is missing or unparseable — the canonical ' +
+        'publish registry must be recorded so the gate can detect registry drift ' +
+        '(FWA-BV-SDK-01).',
+    );
+  }
+
+  const actualRegistry = pkg.publishConfig && pkg.publishConfig.registry;
+  if (typeof actualRegistry !== 'string' || actualRegistry.trim() === '') {
+    errors.push(
+      'package.json#publishConfig.registry is missing — without a pinned ' +
+        'registry the package can publish to an attacker-controlled or default ' +
+        'endpoint (FWA-BV-SDK-01).',
+    );
+  } else if (expectedHost) {
+    const actualHost = normalizeRegistryHost(actualRegistry);
+    if (actualHost !== expectedHost) {
+      errors.push(
+        `registry-drift: package.json#publishConfig.registry "${actualRegistry}" ` +
+          `(host "${actualHost ?? '<unparseable>'}") does not match the canonical ` +
+          `registry "${expectedRegistry}" (host "${expectedHost}") recorded in ` +
+          `PUBLISH_NAMES.json. Repointing the publish registry is rejected ` +
+          `(FWA-BV-SDK-01).`,
+      );
+    }
+  }
+
   return errors;
 }
 
 // Run directly (CLI / CI), not when imported by the jest test.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const errors = checkPublishNames();
+  // CITRATE_GATE_ROOT lets the test harness point the gate at a fixture repo
+  // root. Unset in CI / normal use, so the canonical repoRoot is checked.
+  const root = process.env.CITRATE_GATE_ROOT || repoRoot;
+  const errors = checkPublishNames(root);
   if (errors.length > 0) {
     console.error('FWA-C12-01 publish-name gate FAILED:');
     for (const e of errors) console.error('  - ' + e);
