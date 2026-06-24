@@ -1,0 +1,67 @@
+name: Release
+
+# FWA-BV-SDK-02 — authoritative, server-side enforcement of the supply-chain
+# publish gate. The publish job CANNOT run until the `publish-names-gate` job
+# (which runs scripts/check-publish-names.mjs directly, NOT through an npm
+# lifecycle hook) has passed. This closes the `npm publish --ignore-scripts`
+# bypass: `--ignore-scripts` disables the client-side `prepublishOnly` hook,
+# but it has no power over a CI job that is a hard `needs:` precondition.
+#
+# Triggered on a version tag push (or manual dispatch). The actual `npm
+# publish` step also passes `--provenance` and pins the registry via a
+# repo-local .npmrc so the published artifact records signed build provenance.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Hard gate. Runs the drift check independently of npm's lifecycle hooks so
+  # it is immune to `npm publish --ignore-scripts`.
+  publish-names-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Publish-name + registry drift gate (FWA-C12-01 / BV-SDK-01)
+        run: node scripts/check-publish-names.mjs
+
+  publish:
+    # The publish job is blocked until the gate job succeeds. If the gate fails
+    # (name drift, dropped publishConfig, or a repointed registry) this job is
+    # skipped and nothing is ever published.
+    needs: publish-names-gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # required for npm provenance attestation (OIDC).
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org/'
+      # Belt-and-suspenders: re-run the gate in the publish job itself, again
+      # independently of npm lifecycle hooks, so the precondition holds even if
+      # the job graph is edited later.
+      - name: Re-assert publish-name + registry gate
+        run: node scripts/check-publish-names.mjs
+      - name: Install dependencies
+        run: npm ci
+      - name: Build publish artifact
+        run: npm run build:publish
+      # `--ignore-scripts` is intentionally NOT used; the gate above is the
+      # authoritative control regardless. `--provenance` records signed build
+      # provenance for the published tarball.
+      - name: Publish to npm (provenance)
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
