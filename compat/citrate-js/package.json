@@ -1,0 +1,27 @@
+{
+  "name": "citrate-js",
+  "version": "0.2.1",
+  "description": "DEPRECATED. Renamed to @citratenetwork/sdk. This package re-exports it for one migration cycle.",
+  "keywords": ["citrate", "deprecated"],
+  "license": "Apache-2.0",
+  "author": "Citrate Team",
+  "homepage": "https://docs.citrate.ai/sdks/js",
+  "main": "index.js",
+  "module": "index.mjs",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs",
+      "require": "./index.js"
+    }
+  },
+  "files": ["index.js", "index.mjs", "index.d.ts", "README.md"],
+  "dependencies": {
+    "@citratenetwork/sdk": "0.2.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

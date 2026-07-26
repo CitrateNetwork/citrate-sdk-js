@@ -1,11 +1,14 @@
 /**
  * EW-S1 WP-7 — UserOperation packing + hashing + Kernel encodings.
  *
- * Hash vector source (no mocks): LIVE EntryPoint v0.7 on chain 40204
- * at `0x4a86659BDab24dc444C72fbbaD4cd83491820E40` — captured 2026-06-11
- * via `cast call $EP 'getUserOpHash((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes))' …`.
- * Encoding layouts are pinned to the vendored Kernel v3.3 +
- * CitratePaymaster sources in citrate-chain.
+ * Hash vector source (no mocks): the LIVE EntryPoint v0.7 on chain 40204, sourced
+ * from the federation contract artifact (AA_ADDRESSES.EntryPoint =
+ * 0xc698feaf0ff7fdb0d60e2f620c97cb729a694975). Re-earned 2026-07-25 (DEVX-S0) after
+ * the 2026-07-23 deployer-key reroll retired the old EntryPoint
+ * (0x4a86659B…, now empty code) via:
+ *   cast call $EP 'getUserOpHash((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes))' \
+ *     '(0x5cE3…,0,0x,0xdeadbeef,0x…0186a0,50000,0x…77359400,0x,0x)' --rpc-url https://rpc.citrate.ai
+ * Encoding layouts are pinned to the vendored Kernel v3.3 + CitratePaymaster sources.
  */
 
 import { AbiCoder } from 'ethers';
@@ -36,11 +39,13 @@ import {
   KernelEncodingError,
 } from '../../src/aa/kernel';
 import { PaymasterCategory } from '../../src/aa/types';
+import { AA_ADDRESSES, CHAIN_IDS } from '../../src/utils/constants';
 
 const coder = AbiCoder.defaultAbiCoder();
 
-const ENTRY_POINT = '0x4a86659BDab24dc444C72fbbaD4cd83491820E40' as const;
-const CHAIN_ID = 40204n;
+// Sourced from the federation contract artifact — never hand-pinned (DEVX-S0).
+const ENTRY_POINT = AA_ADDRESSES.EntryPoint;
+const CHAIN_ID = BigInt(CHAIN_IDS.TESTNET);
 const SENDER = '0x5cE327300221659b66323dC344C2275A7DA756fF' as const;
 
 describe('gas packing', () => {
@@ -73,9 +78,9 @@ describe('getUserOpHash — parity with the LIVE EntryPoint v0.7 on 40204', () =
       maxPriorityFeePerGas: 1_000_000_000n,
       maxFeePerGas: 2_000_000_000n,
     });
-    // cast call $EP 'getUserOpHash(...)' "(sender,0,0x,0xdeadbeef,…)" --rpc-url https://rpc.citrate.ai
+    // Re-earned 2026-07-25 vs live EntryPoint 0xc698feaf… on 40204 (see header).
     expect(getUserOpHash(op, ENTRY_POINT, CHAIN_ID)).toBe(
-      '0x5369c256d308e61a1fe8b15aaaa7709fee6b8edd46b5c452a9bc5ec8965629fd',
+      '0xba8ffd202fbc4ab5e6c8b3190631f39409351bbd1291d6a92d8d2082d269be02',
     );
   });
 
