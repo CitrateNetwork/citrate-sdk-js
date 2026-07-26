@@ -1,7 +1,7 @@
 {
   "name": "citrate-js",
   "version": "0.2.1",
-  "description": "DEPRECATED. Renamed to @citratenetwork/sdk. This package re-exports it for one migration cycle.",
+  "description": "DEPRECATED. Renamed to @citratelabs/sdk. This package re-exports it for one migration cycle.",
   "keywords": ["citrate", "deprecated"],
   "license": "Apache-2.0",
   "author": "Citrate Team",
@@ -18,7 +18,7 @@
   },
   "files": ["index.js", "index.mjs", "index.d.ts", "README.md"],
   "dependencies": {
-    "@citratenetwork/sdk": "0.2.0"
+    "@citratelabs/sdk": "0.2.0"
   },
   "publishConfig": {
     "access": "public",
