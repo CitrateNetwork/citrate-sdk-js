@@ -29,7 +29,7 @@ export * from './utils/constants';
 export * from './utils/validation';
 
 // React hooks (only if React is installed)
-// Import separately: import { useCitrateClient } from '@citratenetwork/sdk/react/hooks'
+// Import separately: import { useCitrateClient } from '@citratelabs/sdk/react/hooks'
 // export * from './react/hooks'; // Commented out to avoid requiring React as dependency
 
 // Version (kept in sync with package.json)

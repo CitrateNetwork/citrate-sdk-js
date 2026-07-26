@@ -5,7 +5,7 @@
  *   - package.json#name must be one of the RESERVED publish names in
  *     PUBLISH_NAMES.json (the in-repo mirror of the federation manifest
  *     [repos.citrate-sdk-js].publishes entry). This catches the FWA-C12-01
- *     drift where the manifest recorded "@citratenetwork/sdk" while the repo
+ *     drift where the manifest recorded "@citratelabs/sdk" while the repo
  *     actually publishes "citrate-js".
  *   - package.json#publishConfig.access must be present so the unscoped
  *     package never publishes to an ambiguous default target (WEB-5 squat).

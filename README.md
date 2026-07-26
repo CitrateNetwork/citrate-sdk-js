@@ -11,7 +11,7 @@ agentile-archive: https://github.com/CitrateNetwork/citrate-agentile-archive
 
 # citrate-sdk-js
 
-Canonical TypeScript SDK for Citrate Network (@citratenetwork/sdk)
+Canonical TypeScript SDK for Citrate Network (@citratelabs/sdk)
 
 ## Repository context
 
