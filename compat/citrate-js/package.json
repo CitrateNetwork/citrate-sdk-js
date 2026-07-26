@@ -1,5 +1,5 @@
 {
-  "name": "citrate-js",
+  "name": "@citratelabs/citrate-js",
   "version": "0.2.1",
   "description": "DEPRECATED. Renamed to @citratelabs/sdk. This package re-exports it for one migration cycle.",
   "keywords": ["citrate", "deprecated"],
