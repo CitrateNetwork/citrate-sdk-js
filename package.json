@@ -1,17 +1,32 @@
 {
-  "name": "citrate-js",
+  "name": "@citratenetwork/sdk",
   "version": "0.2.0",
-  "description": "Canonical TypeScript/JavaScript SDK for the Citrate distributed AI network. This is the canonical SDK \u2014 all other language SDKs are non-canonical until a real pilot integrator requires parity.",
+  "description": "Canonical TypeScript/JavaScript SDK for the Citrate distributed AI network. This is the canonical SDK — all other language SDKs are non-canonical until a real pilot integrator requires parity.",
   "main": "dist/index.js",
+  "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./react/hooks": {
+      "types": "./dist/react/hooks.d.ts",
+      "import": "./dist/react/hooks.mjs",
+      "require": "./dist/react/hooks.js"
+    },
+    "./package.json": "./package.json"
+  },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "build": "tsc",
-    "build:publish": "tsc -p tsconfig.publish.json",
-    "dev": "tsc --watch",
+    "build": "tsup",
+    "build:publish": "tsup",
+    "build:types": "tsc --emitDeclarationOnly --declaration",
+    "dev": "tsup --watch",
     "test": "jest --passWithNoTests --testPathIgnorePatterns=tests/integration",
     "test:unit": "jest --passWithNoTests --testPathIgnorePatterns=tests/integration",
     "test:integration": "jest --testMatch='**/tests/integration/**/*.test.ts' --runInBand --testTimeout=120000",
@@ -20,6 +35,8 @@
     "test:watch": "jest --watch",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write src/**/*.ts",
+    "sync-contract": "node scripts/sync-contract.mjs",
+    "verify:contract": "node scripts/sync-contract.mjs --check",
     "verify:publish-names": "node scripts/check-publish-names.mjs",
     "prepublishOnly": "npm run verify:publish-names && npm run build:publish"
   },
@@ -59,6 +76,7 @@
     "jest": "^29.7.0",
     "prettier": "^3.0.3",
     "ts-jest": "^29.1.1",
+    "tsup": "^8.5.1",
     "typescript": "^5.2.2"
   },
   "peerDependencies": {

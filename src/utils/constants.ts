@@ -1,27 +1,55 @@
 /**
  * Constants for Citrate JavaScript SDK
+ *
+ * Chain-varying values (RPC/WS endpoints, AA-stack / membership / contract
+ * addresses) are DERIVED from the vendored federation contract artifact
+ * (DEVX-S0, ADR-0001) — the single source of truth generated from
+ * citrate-chain/contracts/addresses/40204.json. Do not hand-copy addresses here;
+ * add them to the artifact and re-sync (`npm run sync-contract`).
  */
+import { FEDERATION_CONTRACT } from '../generated/contract';
 
-// Network constants — canonical chain IDs (match CONFIG.md)
+// Network constants — chainId 40204 is permanent (PR #8396); the literal is
+// kept for type-narrowing, and guarded to equal the artifact below.
 export const CHAIN_IDS = {
   MAINNET: 1,       // Reserved for mainnet
   TESTNET: 40204,   // Testnet beta (rpc.citrate.ai)
 } as const;
 
-// RM-G2.6 / audit SDK-02: array shape so callers can pass the full
-// list straight to `CitrateClientConfig.rpcUrl` for multi-RPC
-// fallback. Pre-fix this was a single string per chain — a broken
-// `rpc.citrate.ai` took every integration down with it.
+/* istanbul ignore next — build-time invariant */
+if (FEDERATION_CONTRACT.chain.chainId !== CHAIN_IDS.TESTNET) {
+  throw new Error(
+    `constants.ts: artifact chainId ${FEDERATION_CONTRACT.chain.chainId} != CHAIN_IDS.TESTNET ${CHAIN_IDS.TESTNET}`,
+  );
+}
+
+// RM-G2.6 / audit SDK-02: array shape so callers can pass the full list straight
+// to `CitrateClientConfig.rpcUrl` for multi-RPC fallback. Sourced from the artifact.
 export const DEFAULT_RPC_URLS: Record<number, string[]> = {
-  [CHAIN_IDS.TESTNET]: [
-    'https://rpc.citrate.ai',
-    // Add backup endpoints here as they come online.
-  ],
+  [CHAIN_IDS.TESTNET]: [FEDERATION_CONTRACT.chain.rpcUrl],
 };
 
 export const DEFAULT_WS_URLS: Record<number, string> = {
-  [CHAIN_IDS.TESTNET]: 'wss://rpc.citrate.ai/ws',
+  [CHAIN_IDS.TESTNET]: FEDERATION_CONTRACT.chain.wsUrl,
 };
+
+// Account-abstraction stack addresses (ERC-4337) — sourced from the artifact so
+// they can never go stale against a reroll (the June-8 EntryPoint bug class).
+export const AA_ADDRESSES = FEDERATION_CONTRACT.aaStack;
+
+// Membership contracts (CitrateMemberSBT / MembershipStakeVault) — from the artifact.
+export const MEMBERSHIP_ADDRESSES = FEDERATION_CONTRACT.membership;
+
+// Named application contracts (ModelRegistry, ComputePool, …) — from the artifact.
+export const CONTRACT_ADDRESSES = FEDERATION_CONTRACT.contracts;
+
+// Canonical precompile table, sourced from the federation artifact (the authoritative set).
+// Prefer this over the legacy PRECOMPILE_ADDRESSES below. The legacy map predates the artifact
+// and carries entries the canonical table does NOT contain — notably INFERENCE_VERIFY (0x…0104),
+// which is absent on-chain (the canonical proof-verify precompile is InferenceProofVerify 0x…0108),
+// and the 0x1000-range state precompiles. See tests/unit/precompile_reconciliation.test.ts for the
+// exact reconciliation; correcting the legacy map is a chain-team-gated change (DEVX-S3).
+export const PRECOMPILES = FEDERATION_CONTRACT.precompiles;
 
 // State-changing precompile addresses (canonical — match executor.rs)
 // These are the addresses the executor actually dispatches to for on-chain model state

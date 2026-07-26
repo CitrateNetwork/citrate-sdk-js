@@ -1,5 +1,5 @@
 {
-  "_comment": "FWA-C12-01 remediation — canonical publish-name reservation for this repo. This file is the in-repo mirror of the federation manifest [repos.citrate-sdk-js].publishes entry (citrate-federation/manifest.toml). The name-drift CI gate (scripts/check-publish-names.mjs + tests/unit/rm_supply_c12_01_publish_names.test.ts) asserts that package.json#name is one of these reserved names and that publishConfig is present. The federation manifest MUST record the same set — see the cross-repo reconciliation in .agentile/audits/2026-06-21-fwa-remediation/REMEDIATION_LOG.md.",
+  "_comment": "FWA-C12-01 remediation — canonical publish-name reservation for this repo. In-repo mirror of the federation manifest [repos.citrate-sdk-js].publishes entry. The name-drift CI gate (scripts/check-publish-names.mjs + tests/unit/rm_supply_c12_01_publish_names.test.ts) asserts package.json#name is one of these reserved names and that publishConfig is present. 2026-07-25 (ADR-0003 / DevX D-3): canonical name unified to @citratenetwork/sdk; citrate-js retained as a reserved name for the deprecated compatibility shim AND as a defensive anti-squat reservation. SECURITY: the @citratenetwork npm scope must be owned before first publish (S5).",
   "registry": "npmjs.org",
-  "reserved": ["citrate-js"]
+  "reserved": ["@citratenetwork/sdk", "citrate-js"]
 }
