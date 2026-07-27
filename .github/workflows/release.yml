@@ -65,3 +65,18 @@ jobs:
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Publish the deprecated compatibility shim (@citratelabs/citrate-js), which
+      # re-exports @citratelabs/sdk. Skips cleanly if its version is already on the
+      # registry, so it only goes out when compat/citrate-js/package.json bumps.
+      - name: Publish deprecated shim (@citratelabs/citrate-js)
+        working-directory: compat/citrate-js
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VER=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VER" version >/dev/null 2>&1; then
+            echo "$NAME@$VER already published; skipping."
+          else
+            npm publish --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
