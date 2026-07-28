@@ -37,3 +37,6 @@ This repo inherits the operating rules from `CitrateNetwork/citrate-agentile-arc
 ## License
 
 Inherits from the monorepo. See [`LICENSE`](LICENSE) if present, or the [monorepo archive](https://github.com/CitrateNetwork/citrate-monorepo-archive/blob/main/LICENSE).
+## Open source and access
+
+This repository is public. Citrate open sources the whole chain and application layer before mainnet, in January 2027; until then most of the core is access-by-request, as a security practice, not secrecy. Approved contributors receive privileged access to every repository except the private repos of clients and employees. Request access at [citrate.ai/contact](https://citrate.ai/contact) or email `hello@citrate.ai`. Full policy: <https://docs.citrate.ai/start/open-source>.
