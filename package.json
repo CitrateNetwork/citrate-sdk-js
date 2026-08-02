@@ -54,11 +54,11 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/citrate-ai/citrate.git",
-    "directory": "sdks/javascript/citrate-js"
+    "url": "git+https://github.com/CitrateNetwork/citrate-sdk-js.git"
   },
   "bugs": {
-    "url": "https://github.com/citrate-ai/citrate/issues"
+    "url": "https://docs.citrate.ai",
+    "email": "developers@citrate.ai"
   },
   "homepage": "https://docs.citrate.ai",
   "dependencies": {
