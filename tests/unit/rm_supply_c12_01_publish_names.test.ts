@@ -30,10 +30,12 @@ const gateScript = join(repoRoot, 'scripts', 'check-publish-names.mjs');
 interface Pkg {
   name: string;
   publishConfig?: { access?: string; registry?: string };
+  repository?: { type?: string; url?: string; directory?: string };
 }
 interface Reservation {
   reserved?: string[];
   registry?: string;
+  sourceRepo?: string;
 }
 
 /**
@@ -106,8 +108,13 @@ describe('FWA-BV-SDK-01 — registry-drift gate (real script, exit code)', () =>
   const cleanPkg = {
     name: 'citrate-js',
     publishConfig: { access: 'public', registry: 'https://registry.npmjs.org/' },
+    repository: { type: 'git', url: 'git+https://github.com/CitrateNetwork/fixture-repo.git' },
   };
-  const reservationFixture = { registry: 'npmjs.org', reserved: ['citrate-js'] };
+  const reservationFixture = {
+    registry: 'npmjs.org',
+    reserved: ['citrate-js'],
+    sourceRepo: 'CitrateNetwork/fixture-repo',
+  };
 
   test('GREEN: clean manifest passes the gate (exit 0)', () => {
     const dir = makeFixture(cleanPkg, reservationFixture);
@@ -146,5 +153,70 @@ describe('FWA-BV-SDK-01 — registry-drift gate (real script, exit code)', () =>
     );
     cleanups.push(dir);
     expect(runGate(dir)).not.toBe(0);
+  });
+});
+
+/**
+ * PROVENANCE DRIFT (2026-08-01). The gate refused a drifted registry but said
+ * nothing about a drifted SOURCE, so @citratelabs/sdk@0.2.0 shipped to npm stating
+ * its repository was github.com/citrate-ai/citrate — an org that returns 404. The
+ * install worked; only the audit trail was broken, which is the failure mode a
+ * supply-chain gate is supposed to be the last to allow.
+ */
+describe('provenance-drift gate (real script, exit code)', () => {
+  const cleanups: string[] = [];
+  afterAll(() => {
+    for (const dir of cleanups) rmSync(dir, { recursive: true, force: true });
+  });
+
+  const reservationFixture = {
+    registry: 'npmjs.org',
+    reserved: ['citrate-js'],
+    sourceRepo: 'CitrateNetwork/fixture-repo',
+  };
+  const base = {
+    name: 'citrate-js',
+    publishConfig: { access: 'public', registry: 'https://registry.npmjs.org/' },
+  };
+
+  test('RED: the exact historical defect — repository.url naming a nonexistent org — fails', () => {
+    const dir = makeFixture(
+      { ...base, repository: { type: 'git', url: 'https://github.com/citrate-ai/citrate.git' } },
+      reservationFixture,
+    );
+    cleanups.push(dir);
+    expect(runGate(dir)).not.toBe(0);
+  });
+
+  test('RED: a missing repository.url fails — a package with no stated source is unauditable', () => {
+    const dir = makeFixture({ ...base }, reservationFixture);
+    cleanups.push(dir);
+    expect(runGate(dir)).not.toBe(0);
+  });
+
+  test('RED: a leftover monorepo `directory` subpath fails', () => {
+    const dir = makeFixture(
+      {
+        ...base,
+        repository: {
+          type: 'git',
+          url: 'git+https://github.com/CitrateNetwork/fixture-repo.git',
+          directory: 'sdks/javascript/citrate-js',
+        },
+      },
+      reservationFixture,
+    );
+    cleanups.push(dir);
+    expect(runGate(dir)).not.toBe(0);
+  });
+
+  test('GREEN: the real repo manifest passes its own gate', () => {
+    expect(runGate(repoRoot)).toBe(0);
+  });
+
+  test('the real package points at the canonical source repo', () => {
+    expect(reservation.sourceRepo).toBe('CitrateNetwork/citrate-sdk-js');
+    expect(pkg.repository?.url).toContain(`github.com/${reservation.sourceRepo}`);
+    expect(pkg.repository?.directory).toBeUndefined();
   });
 });

@@ -1,5 +1,10 @@
 {
   "_comment": "FWA-C12-01 remediation — canonical publish-name reservation for this repo. In-repo mirror of the federation manifest [repos.citrate-sdk-js].publishes entry. The name-drift CI gate (scripts/check-publish-names.mjs + tests/unit/rm_supply_c12_01_publish_names.test.ts) asserts package.json#name is one of these reserved names and that publishConfig is present. 2026-07-25 (ADR-0003 / DevX D-3): canonical name unified to @citratelabs/sdk; citrate-js retained as a reserved name for the deprecated compatibility shim AND as a defensive anti-squat reservation. SECURITY: the @citratelabs npm scope must be owned before first publish (S5).",
   "registry": "npmjs.org",
-  "reserved": ["@citratelabs/sdk", "citrate-js"]
+  "reserved": [
+    "@citratelabs/sdk",
+    "citrate-js"
+  ],
+  "sourceRepo": "CitrateNetwork/citrate-sdk-js",
+  "_sourceRepoComment": "2026-08-01: the PUBLISHED 0.2.0 carries repository.url github.com/citrate-ai/citrate -- an org that DOES NOT EXIST (gh api -> 404). Anyone who installed @citratelabs/sdk and clicked through to the source got a dead link, and the 'directory' field pointed into a monorepo layout retired at the federation split. Recorded here so the publish gate can reject provenance drift the same way it rejects registry drift: a package whose stated source cannot be reached is unauditable by the people we most want auditing it."
 }

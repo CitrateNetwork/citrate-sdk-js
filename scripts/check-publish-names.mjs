@@ -108,6 +108,45 @@ export function checkPublishNames(root = repoRoot) {
     }
   }
 
+  // PROVENANCE (2026-08-01). The published 0.2.0 states its source is
+  // github.com/citrate-ai/citrate — an org that does not exist. The gate already
+  // refused a drifted *registry*; it had nothing to say about a drifted *source*,
+  // so the package shipped to npm advertising a 404 as its provenance. A consumer
+  // who cannot reach the source cannot audit what they installed, which is the one
+  // thing a supply-chain gate exists to preserve.
+  const expectedRepo = reservation.sourceRepo;
+  if (typeof expectedRepo !== 'string' || expectedRepo.trim() === '') {
+    errors.push(
+      'PUBLISH_NAMES.json#sourceRepo is missing — the canonical source repo must ' +
+        'be recorded so the gate can detect provenance drift.',
+    );
+  } else {
+    const repoUrl = pkg.repository && pkg.repository.url;
+    if (typeof repoUrl !== 'string' || repoUrl.trim() === '') {
+      errors.push(
+        'package.json#repository.url is missing — a published package with no ' +
+          'stated source cannot be audited by the people who install it.',
+      );
+    } else if (!repoUrl.includes(`github.com/${expectedRepo}`)) {
+      errors.push(
+        `provenance-drift: package.json#repository.url "${repoUrl}" does not point ` +
+          `at the canonical source "github.com/${expectedRepo}" recorded in ` +
+          `PUBLISH_NAMES.json#sourceRepo. Publishing a package whose stated origin ` +
+          `is wrong (or nonexistent) ships an unauditable artifact.`,
+      );
+    }
+
+    // A `directory` field is a monorepo-era artifact. This repo IS the package
+    // root; a leftover subpath sends tooling to a directory that does not exist.
+    if (pkg.repository && pkg.repository.directory != null) {
+      errors.push(
+        `provenance-drift: package.json#repository.directory ` +
+          `"${pkg.repository.directory}" is set, but this repo is the package root. ` +
+          `That subpath is a leftover from the pre-split monorepo layout.`,
+      );
+    }
+  }
+
   return errors;
 }
 
