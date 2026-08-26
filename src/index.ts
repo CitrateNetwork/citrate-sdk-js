@@ -45,3 +45,6 @@ export * as identity from './identity';
 export * as entitlements from './entitlements/capabilities';
 // Inference gateway — OpenAI-compatible client over infer.citrate.ai (DEVX-S2).
 export * as gateway from './gateway/client';
+// Memory — typed client for a citrate-memories gateway ("git for agents"):
+// OIDC REST (recall/search/neighbors/verify/review/assert/layout) + BYOM MCP.
+export * as memory from './memory/client';
