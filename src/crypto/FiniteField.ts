@@ -28,54 +28,6 @@ function secureRandomBytes(length: number): Uint8Array {
 }
 
 export class GF256 {
-  private static expTable: number[] = [];
-  private static logTable: number[] = [];
-  private static initialized = false;
-
-  /**
-   * Initialize exponential and logarithm tables
-   */
-  private static initializeTables(): void {
-    if (this.initialized) return;
-
-    this.expTable = new Array(512);
-    this.logTable = new Array(256);
-
-    // Generate exponential table
-    let x = 1;
-    for (let i = 0; i < 255; i++) {
-      this.expTable[i] = x;
-      this.logTable[x] = i;
-      x = this.multiplyRaw(x, 3); // 3 is a primitive element
-    }
-
-    // Handle overflow
-    for (let i = 255; i < 512; i++) {
-      this.expTable[i] = this.expTable[i - 255] ?? 0;
-    }
-
-    this.logTable[0] = 0; // Special case
-    this.initialized = true;
-  }
-
-  /**
-   * Raw multiplication without table lookup
-   */
-  private static multiplyRaw(a: number, b: number): number {
-    let result = 0;
-    while (b) {
-      if (b & 1) {
-        result ^= a;
-      }
-      a <<= 1;
-      if (a & 0x100) {
-        a ^= 0x11b; // Irreducible polynomial
-      }
-      b >>= 1;
-    }
-    return result & 0xff;
-  }
-
   /**
    * Addition in GF(2^8) (XOR)
    */
@@ -91,59 +43,88 @@ export class GF256 {
   }
 
   /**
-   * Multiplication in GF(2^8)
+   * Multiplication in GF(2^8) — CONSTANT-TIME, table-free.
+   *
+   * Leg-A C-02 (SEC audit 2026-09-02): the previous implementation used
+   * secret-indexed logarithm/exponent table lookups — a textbook
+   * cache-timing side channel on the key-reconstruction path
+   * (`reconstructKeyFromShares` runs this over AES model-key bytes on a possibly
+   * shared/multi-tenant host). This carry-less "Russian-peasant" multiply runs a
+   * fixed 8 iterations with NO data-dependent branch and NO memory lookup keyed
+   * by an operand, so its timing does not depend on the secret operands.
    */
   static multiply(a: number, b: number): number {
-    this.initializeTables();
-
-    if (a === 0 || b === 0) {
-      return 0;
+    a &= 0xff;
+    b &= 0xff;
+    let p = 0;
+    for (let i = 0; i < 8; i++) {
+      // Add `a` into the product iff the low bit of `b` is set (branchless).
+      const addMask = -(b & 1) & 0xff; // 0xff when b&1, else 0x00
+      p ^= a & addMask;
+      // xtime(a): shift left, reduce by 0x1b iff the high bit was set.
+      const hi = (a >> 7) & 1;
+      a = (a << 1) & 0xff;
+      a ^= 0x1b & (-hi & 0xff);
+      b >>= 1;
     }
-
-    return this.expTable[(this.logTable[a] ?? 0) + (this.logTable[b] ?? 0)] ?? 0;
+    return p & 0xff;
   }
 
   /**
-   * Division in GF(2^8)
+   * Multiplicative inverse in GF(2^8) via Fermat's little theorem: a^(2^8-2) =
+   * a^254. The exponent is a public constant, so the sequence of `multiply`
+   * calls is fixed; each `multiply` is constant-time in its operands, so the
+   * inverse is constant-time in `a`. (No secret-indexed table.)
+   */
+  static inverse(a: number): number {
+    a &= 0xff;
+    if (a === 0) {
+      throw new Error('Zero has no inverse in GF(2^8)');
+    }
+    // a^254 = a^2 · a^4 · a^8 · a^16 · a^32 · a^64 · a^128 (exponent 0b11111110).
+    let result = 1;
+    let base = a;
+    let e = 254;
+    while (e > 0) {
+      if (e & 1) result = GF256.multiply(result, base);
+      base = GF256.multiply(base, base);
+      e >>= 1;
+    }
+    return result & 0xff;
+  }
+
+  /**
+   * Division in GF(2^8): a · b⁻¹.
    */
   static divide(a: number, b: number): number {
-    if (b === 0) {
+    if ((b & 0xff) === 0) {
       throw new Error('Division by zero in GF(2^8)');
     }
-
-    if (a === 0) {
+    if ((a & 0xff) === 0) {
       return 0;
     }
-
-    this.initializeTables();
-    return this.expTable[(this.logTable[a] ?? 0) - (this.logTable[b] ?? 0) + 255] ?? 0;
+    return GF256.multiply(a, GF256.inverse(b));
   }
 
   /**
-   * Exponentiation in GF(2^8)
+   * Exponentiation in GF(2^8) via square-and-multiply.
    */
   static power(a: number, exp: number): number {
     if (exp === 0) {
       return 1;
     }
-    if (a === 0) {
+    if ((a & 0xff) === 0) {
       return 0;
     }
-
-    this.initializeTables();
-    return this.expTable[((this.logTable[a] ?? 0) * exp) % 255] ?? 0;
-  }
-
-  /**
-   * Multiplicative inverse in GF(2^8)
-   */
-  static inverse(a: number): number {
-    if (a === 0) {
-      throw new Error('Zero has no inverse in GF(2^8)');
+    let result = 1;
+    let base = a & 0xff;
+    let e = exp;
+    while (e > 0) {
+      if (e & 1) result = GF256.multiply(result, base);
+      base = GF256.multiply(base, base);
+      e >>= 1;
     }
-
-    this.initializeTables();
-    return this.expTable[255 - (this.logTable[a] ?? 0)] ?? 0;
+    return result & 0xff;
   }
 }
 
