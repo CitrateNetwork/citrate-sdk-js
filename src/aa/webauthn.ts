@@ -162,7 +162,13 @@ export async function signUserOpWithPasskey(
   const publicKey: PublicKeyCredentialRequestOptions = {
     challenge: challenge.buffer.slice(0) as ArrayBuffer,
     timeout: options.timeoutMs ?? 60_000,
-    userVerification: options.userVerification ?? 'preferred',
+    // SJS-B-010: default to 'required', not the browser-login default
+    // 'preferred'. This ceremony authorizes a UserOperation that can move value;
+    // 'preferred' lets the authenticator skip user verification (UV=0), so mere
+    // possession of an unlocked authenticator would sign. A caller can still
+    // pass 'preferred'/'discouraged' explicitly, but the value-moving default is
+    // a real user gesture (biometric/PIN).
+    userVerification: options.userVerification ?? 'required',
     ...(options.rpId ? { rpId: options.rpId } : {}),
     ...(options.credentialId
       ? {

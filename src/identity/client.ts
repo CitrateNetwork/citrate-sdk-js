@@ -12,6 +12,7 @@ import { FEDERATION_CONTRACT } from '../generated/contract';
 import { resolveCapabilities, normalizeTier, type CapabilitySet, type Tier } from '../entitlements/capabilities';
 import { createPkce, type Pkce } from './pkce';
 import { verifyIdToken, type IdTokenClaims, type Jwk } from './jwt';
+import { enforceTransportSecurity } from '../utils/transport';
 
 export class IdentityError extends Error {
   constructor(message: string, readonly status?: number) {
@@ -34,6 +35,14 @@ export interface IdentityClientConfig {
   scopes?: string[];
   /** Injectable HTTP transport (defaults to global fetch). */
   fetch?: FetchLike;
+  /**
+   * Opt in to remote plaintext endpoints (SJS-B / SPY-B-009). OIDC id/access/
+   * refresh tokens are bearer credentials; a remote `http://` token/userinfo/
+   * jwks endpoint (e.g. from a hostile discovery document) is refused by
+   * default. Loopback is always allowed. Note this guards the SDK's own fetches,
+   * not the browser redirect URI.
+   */
+  allowInsecureHttp?: boolean;
 }
 
 interface Discovery {
@@ -122,8 +131,26 @@ export class IdentityClient {
     return { url: `${base}?${params.toString()}`, pkce };
   }
 
-  /** Exchange an authorization code for tokens and verify the ID token. */
-  async exchangeCode(opts: { code: string; codeVerifier: string; nonce?: string }): Promise<TokenSet> {
+  /**
+   * Exchange an authorization code for tokens and verify the ID token.
+   *
+   * SJS-B-007 (mirrors Python SPY-B-010): `nonce` is REQUIRED. `authorizeUrl`
+   * already requires it, and `verifyIdToken` only enforces the ID-token nonce
+   * binding when a nonce is supplied — so an optional nonce here meant an
+   * integrator who did the obvious thing (generate a nonce, put it in the URL,
+   * exchange the code) got a flow that looked nonce-protected, compiled clean,
+   * and silently skipped the replay/injection check on the leg that matters.
+   * Making it required means the value threaded through `authorizeUrl` cannot be
+   * dropped by omission. A literal empty string is rejected for the same reason.
+   */
+  async exchangeCode(opts: { code: string; codeVerifier: string; nonce: string }): Promise<TokenSet> {
+    if (typeof opts.nonce !== 'string' || opts.nonce.length === 0) {
+      throw new IdentityError(
+        'exchangeCode requires a non-empty nonce — the same value passed to authorizeUrl. ' +
+          'The ID-token nonce binding is the defence against token replay/injection and is ' +
+          'skipped when no nonce is supplied (SJS-B-007).',
+      );
+    }
     const disc = await this.discover();
     const body = new URLSearchParams({
       grant_type: 'authorization_code',
@@ -247,12 +274,14 @@ export class IdentityClient {
 
   // ── transport helpers ───────────────────────────────────────────────────────
   private async getJson(url: string, bearer?: string): Promise<unknown> {
+    enforceTransportSecurity(url, { allowInsecureHttp: this.config.allowInsecureHttp ?? false });
     const res = await this.fetch(url, { method: 'GET', headers: bearer ? { authorization: `Bearer ${bearer}` } : {} });
     if (!res.ok) throw new IdentityError(`GET ${url} failed: ${res.status}`, res.status);
     return res.json();
   }
 
   private async postForm(url: string, body: URLSearchParams, bearer?: string): Promise<unknown> {
+    enforceTransportSecurity(url, { allowInsecureHttp: this.config.allowInsecureHttp ?? false });
     const headers: Record<string, string> = { 'content-type': 'application/x-www-form-urlencoded' };
     if (bearer) headers['authorization'] = `Bearer ${bearer}`;
     const res = await this.fetch(url, { method: 'POST', headers, body: body.toString() });
@@ -261,6 +290,7 @@ export class IdentityClient {
   }
 
   private async postJson(url: string, obj: unknown, bearer?: string): Promise<unknown> {
+    enforceTransportSecurity(url, { allowInsecureHttp: this.config.allowInsecureHttp ?? false });
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (bearer) headers['authorization'] = `Bearer ${bearer}`;
     const res = await this.fetch(url, { method: 'POST', headers, body: JSON.stringify(obj) });
