@@ -9,6 +9,13 @@
  */
 import { FEDERATION_CONTRACT } from '../generated/contract';
 
+// Single source of truth for the package version. `index.ts` re-exports this as
+// `VERSION` and the HTTP User-Agent is derived from it (SJS-B-H03: the axios UA
+// was hardcoded `citrate-js-sdk/0.1.0` while the package shipped 0.2.0, so
+// server-side telemetry attributed traffic to a version that had not shipped for
+// two releases). Keep in lockstep with package.json `version`.
+export const SDK_VERSION = '0.2.0';
+
 // Network constants — chainId 40204 is permanent (PR #8396); the literal is
 // kept for type-narrowing, and guarded to equal the artifact below.
 export const CHAIN_IDS = {
@@ -99,15 +106,24 @@ export const MODEL_LIMITS = {
   MAX_TAG_LENGTH: 20
 } as const;
 
-// Encryption settings
+// Encryption settings.
+//
+// Leg-A HYG-DRIFT (SEC audit 2026-09-02): these exported constants contradicted
+// the live code — PBKDF2_ITERATIONS advertised 10,000 while CryptoManager uses
+// PBKDF2_DEFAULT_ITERATIONS = 600,000 (OWASP floor). Reconciled below. The ECDH
+// key-encryption key is now HKDF-SHA256 (SJS-B-009), and the owner-wrap KEK is
+// PBKDF2-SHA256 — both are recorded so a consumer reading these is not misled.
 export const ENCRYPTION = {
   ALGORITHM: 'AES-256-GCM',
+  /** ECDH key-encryption-key derivation (KeyManager.deriveSharedKey). */
   KEY_DERIVATION: 'HKDF-SHA256',
+  /** Owner-wrap KEK derivation (KeyManager.encryptKeyForOwner). */
+  OWNER_WRAP_KDF: 'PBKDF2-SHA256',
   NONCE_SIZE: 12,
   AUTH_TAG_SIZE: 16,
   KEY_SIZE: 32,
   SALT_SIZE: 16,
-  PBKDF2_ITERATIONS: 10000
+  PBKDF2_ITERATIONS: 600_000
 } as const;
 
 // Event names

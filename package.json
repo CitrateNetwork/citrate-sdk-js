@@ -62,9 +62,14 @@
   },
   "homepage": "https://docs.citrate.ai",
   "dependencies": {
-    "axios": "^1.7.0",
-    "ethers": "^6.8.0",
+    "axios": "^1.20.0",
+    "ethers": "^6.17.0",
     "eventemitter3": "^5.0.1"
+  },
+  "overridesComment": "SJS-B-006 (mirrors Python SPY-B-008): pin transitive deps past their HIGH advisories. `ws` (via ethers) had uninitialized-memory-disclosure (GHSA-58qx-3vcg-4xpx) + memory-exhaustion DoS (GHSA-96hv-2xvq-fx4p), both fixed in 8.21.0; `form-data` (via axios) had CRLF injection via unescaped multipart field names (GHSA-hmw2-7cc7-3qxx), fixed in 4.0.6. Enforced by tests/unit/rm_g2_6_sdk_dep_hygiene.test.ts.",
+  "overrides": {
+    "ws": "^8.21.0",
+    "form-data": "^4.0.6"
   },
   "devDependencies": {
     "@types/jest": "^29.5.5",

@@ -11,7 +11,45 @@ import { CitrateError } from '../errors/CitrateError';
 /// RM-G.3 — envelope scheme tag for the ECDH-wrapped format (the JS twin
 /// of SDK_PYTHON-001). The symmetric key is ECDH-wrapped to the recipient
 /// and never shipped beside the ciphertext.
-const ECDH_SCHEME_V1 = 'ecdh-secp256k1-aesgcm-v1';
+///
+/// V2 (SJS-B-004 / SJS-B-009, mirrors citrate-sdk-python ECDH_SCHEME_V2): the KEK
+/// is HKDF-SHA256(ECDH-x, salt=per-message kdfSalt, info=both endpoint keys)
+/// instead of a bare unsalted SHA-256 of a mis-sliced x-coordinate. V1 (constant
+/// derivation, no key binding) and the pre-2026-06 cleartext-key envelope are
+/// REFUSED on read — see `decryptData`.
+const ECDH_SCHEME_V2 = 'ecdh-secp256k1-aesgcm-v2';
+const KEK_INFO_PREFIX = 'citrate-ecdh-v2|';
+
+/**
+ * FORWARD SECRECY — what this scheme does NOT give you (mirrors Python
+ * CIT-SDKPY-01). The ECDH is STATIC-STATIC: both the sender's and the
+ * recipient's keys are long-lived wallet keys, and there is no ephemeral
+ * keypair. So the envelope is authenticated (only the holder of the sender key
+ * could have produced it) but it is NOT forward-secret: anyone who later
+ * compromises either static private key can re-derive the KEK and decrypt every
+ * envelope ever exchanged between that pair. The per-message `kdfSalt`
+ * randomizes the KEK per message but does not add forward secrecy — the salt
+ * travels in the envelope. Do not describe this envelope as forward-secret.
+ */
+
+/** Canonical uncompressed public-key hex (no `0x`, lowercase, `04`-prefixed). */
+function canonicalPubHex(key: string): string {
+  const withPrefix = key.startsWith('0x') ? key : '0x' + key;
+  return ethers.SigningKey.computePublicKey(withPrefix, false).slice(2).toLowerCase();
+}
+
+/** HKDF `info` binding both endpoint public keys so a swapped key changes the KEK. */
+function kekInfo(senderPubHex: string, recipientPubHex: string): Uint8Array {
+  return new TextEncoder().encode(`${KEK_INFO_PREFIX}${senderPubHex}|${recipientPubHex}`);
+}
+
+/** Constant-time-ish equality over two equal-length hex strings (public keys). */
+function pubKeysEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
 
 export interface EncryptedModelResult {
   encryptedData: Uint8Array;
@@ -28,6 +66,10 @@ export interface EncryptedModelResult {
 export class KeyManager {
   private wallet: ethers.Wallet | ethers.HDNodeWallet;
   private cryptoManager: CryptoManager;
+  /** SJS-B-011: cache the derived public key so `getPublicKey()` does not build
+   *  a throwaway `new ethers.Wallet(privateKey)` (a fresh private-key copy) on
+   *  every call — it is invariant for the life of the object. */
+  private publicKeyCache?: string;
 
   constructor(privateKey?: string) {
     if (privateKey) {
@@ -46,19 +88,26 @@ export class KeyManager {
   }
 
   /**
-   * Get private key
+   * Get private key.
+   *
+   * SJS-B-011: this is a deliberate escape hatch that hands out the raw private
+   * key as an (immutable, non-wipeable) JS string. Prefer the sign-only /
+   * encrypt methods; a caller that logs, serializes, or stores the return value
+   * leaks the key. Kept for interop with tools that need the raw key.
    */
   getPrivateKey(): string {
     return this.wallet.privateKey;
   }
 
   /**
-   * Get public key for ECDH
+   * Get public key for ECDH (uncompressed, `04`-prefixed hex, no `0x`).
+   * Cached — see `publicKeyCache` (SJS-B-011).
    */
   getPublicKey(): string {
-    // Use ethers to derive the proper public key
-    const wallet = new ethers.Wallet(this.wallet.privateKey);
-    return wallet.signingKey.publicKey.slice(2); // Remove 0x prefix
+    if (this.publicKeyCache === undefined) {
+      this.publicKeyCache = this.wallet.signingKey.publicKey.slice(2).toLowerCase();
+    }
+    return this.publicKeyCache;
   }
 
   /**
@@ -164,6 +213,9 @@ export class KeyManager {
     // lands on public inference calldata. A recipient public key is now
     // REQUIRED; the key is ECDH-wrapped to it and never appears raw. With no
     // recipient we fail closed rather than fabricate confidentiality.
+    //
+    // NOT forward-secret — see the module-level note. The wrap is static-static
+    // ECDH; compromise of either static key retro-decrypts.
     if (!recipientPublicKey) {
       throw new CitrateError(
         'encryptData requires recipientPublicKey: the symmetric key is ECDH-wrapped ' +
@@ -175,80 +227,158 @@ export class KeyManager {
 
     const encrypted = await this.cryptoManager.encryptAES(dataBytes, key);
 
-    // ECDH-wrap the symmetric key to the recipient. shared =
-    // HKDF/SHA256(ECDH(sender_priv, recipient_pub)); the recipient re-derives
-    // the same secret from its own key + senderPublicKey.
-    const shared = await this.deriveSharedKey(recipientPublicKey);
+    // ECDH-wrap the symmetric key to the recipient (V2). The KEK is
+    // HKDF-SHA256(ECDH-x, salt=fresh kdfSalt, info=both endpoint keys); the
+    // recipient re-derives it from its own key + senderPublicKey + the salt and
+    // keys carried in the envelope.
+    const kdfSalt = this.cryptoManager.generateRandomBytes(32);
+    const senderPub = this.getPublicKey();
+    const recipientPub = canonicalPubHex(recipientPublicKey);
+    const shared = await this.deriveSharedKey(recipientPub, {
+      salt: kdfSalt,
+      info: kekInfo(senderPub, recipientPub),
+    });
     const wrapped = await this.cryptoManager.encryptAES(key, shared);
+    // Best-effort wipe of transient key material (SJS-B-011); narrows the
+    // window, JS cannot guarantee erasure.
+    shared.fill(0);
+    key.fill(0);
 
     const package_ = {
-      scheme: ECDH_SCHEME_V1,
+      scheme: ECDH_SCHEME_V2,
       ciphertext: this.cryptoManager.bytesToHex(encrypted.ciphertext),
       nonce: this.cryptoManager.bytesToHex(encrypted.nonce),
       authTag: this.cryptoManager.bytesToHex(encrypted.authTag),
       wrappedKey: this.cryptoManager.bytesToHex(wrapped.ciphertext),
       wrapNonce: this.cryptoManager.bytesToHex(wrapped.nonce),
       wrapAuthTag: this.cryptoManager.bytesToHex(wrapped.authTag),
-      senderPublicKey: this.getPublicKey()
+      kdfSalt: this.cryptoManager.bytesToHex(kdfSalt),
+      senderPublicKey: senderPub,
+      recipientPublicKey: recipientPub,
     };
 
     return JSON.stringify(package_);
   }
 
   /**
-   * Decrypt arbitrary data. Supports the ECDH-wrapped envelope and, for
-   * backward-compatible READS only, the legacy cleartext-key envelope.
+   * Decrypt a V2 ECDH-wrapped envelope. FAILS CLOSED on anything else.
+   *
+   * @param expectedSenderPublicKey - hex public key the envelope MUST claim.
+   *   Pass this whenever origin matters. Static-static ECDH already guarantees
+   *   the envelope was produced by the holder of `senderPublicKey` — an attacker
+   *   cannot relabel their envelope as coming from someone else — but it cannot
+   *   tell you whether that key is one you trust: anyone may send you a perfectly
+   *   valid envelope under their own key. Omitting this authenticates nothing
+   *   about WHO, and callers routinely read a successful decrypt as trust.
+   *
+   * SJS-B-004 (mirrors Python SECREM-02 K3): this used to accept the legacy
+   * cleartext-key envelope "for backward-compatible READS only". An audit PoC
+   * confirmed the consequence: an attacker-supplied envelope carrying a raw key
+   * of their choosing decrypted successfully — the AES-GCM tag verifies because
+   * the attacker made it — and `inference()` JSON.parsed the result into the
+   * caller's output. Producing the legacy form had been stopped; reading it had
+   * not, so the downgrade survived the fix. It also accepted V1, whose KEK
+   * derives from a constant with no binding of the endpoint keys. Both are now
+   * refused.
    */
-  async decryptData(encryptedPackage: string): Promise<string> {
+  async decryptData(encryptedPackage: string, expectedSenderPublicKey?: string): Promise<string> {
     const package_ = JSON.parse(encryptedPackage);
+
+    // A cleartext `key` is hostile by construction — checked FIRST, before the
+    // scheme, so an envelope carrying BOTH a wrappedKey and a cleartext key is
+    // rejected outright rather than silently preferring the safe field (that
+    // would still be processing a tampered envelope).
+    if (package_.key !== undefined) {
+      throw new CitrateError(
+        'decryptData: refusing a cleartext-key envelope. The symmetric key must be ' +
+          'ECDH-wrapped to the recipient. An envelope carrying a raw key is either ' +
+          'pre-2026-06 (never confidential — re-encrypt it) or forged (SJS-B-004).'
+      );
+    }
+    if (package_.scheme !== ECDH_SCHEME_V2) {
+      throw new CitrateError(
+        `decryptData: unsupported envelope scheme ${JSON.stringify(package_.scheme)}. ` +
+          `This SDK reads only ${ECDH_SCHEME_V2}. V1 envelopes derived their key from a ` +
+          'constant with no binding of the endpoint keys and are refused; re-encrypt ' +
+          'with a current SDK (SJS-B-004).'
+      );
+    }
+    for (const field of [
+      'ciphertext', 'nonce', 'authTag', 'wrappedKey', 'wrapNonce', 'wrapAuthTag',
+      'kdfSalt', 'senderPublicKey', 'recipientPublicKey',
+    ]) {
+      if (package_[field] === undefined) {
+        throw new CitrateError(`decryptData: envelope is missing required field '${field}' (SJS-B-004).`);
+      }
+    }
+
+    // Sender pinning, when the caller has an expectation. Compared BEFORE any
+    // key derivation so a mismatch costs nothing.
+    if (expectedSenderPublicKey !== undefined) {
+      if (!pubKeysEqual(canonicalPubHex(package_.senderPublicKey), canonicalPubHex(expectedSenderPublicKey))) {
+        throw new CitrateError(
+          'decryptData: envelope sender does not match the expected sender — refusing to ' +
+            'decrypt. The envelope is cryptographically valid but was produced by a ' +
+            'different keypair (SJS-B-004).'
+        );
+      }
+    }
 
     const ciphertext = this.cryptoManager.hexToBytes(package_.ciphertext);
     const nonce = this.cryptoManager.hexToBytes(package_.nonce);
     const authTag = this.cryptoManager.hexToBytes(package_.authTag);
 
+    // Re-derive the KEK. Both endpoint keys and the salt come from the envelope
+    // and all three feed the derivation, so tampering with any of them yields a
+    // different KEK and the unwrap below fails its tag check — the binding is
+    // enforced by the AEAD, not by a comparison we could forget to make.
+    const shared = await this.deriveSharedKey(package_.senderPublicKey, {
+      salt: this.cryptoManager.hexToBytes(package_.kdfSalt),
+      info: kekInfo(
+        canonicalPubHex(package_.senderPublicKey),
+        canonicalPubHex(package_.recipientPublicKey),
+      ),
+    });
     let key: Uint8Array;
-    if (package_.wrappedKey) {
-      // ECDH-wrapped: re-derive the shared secret from the sender's pubkey.
-      const shared = await this.deriveSharedKey(package_.senderPublicKey);
+    try {
       key = await this.cryptoManager.decryptAES(
         this.cryptoManager.hexToBytes(package_.wrappedKey),
         shared,
         this.cryptoManager.hexToBytes(package_.wrapNonce),
         this.cryptoManager.hexToBytes(package_.wrapAuthTag)
       );
-    } else if (package_.key) {
-      // Legacy insecure envelope — read for back-compat, never produced.
-      key = this.cryptoManager.hexToBytes(package_.key);
-    } else {
-      throw new CitrateError('unrecognized encrypted envelope (no wrappedKey/key)');
+    } finally {
+      shared.fill(0);
     }
 
     const decrypted = await this.cryptoManager.decryptAES(ciphertext, key, nonce, authTag);
+    key.fill(0);
     return this.cryptoManager.bytesToString(decrypted);
   }
 
   /**
-   * Derive shared key using proper ECDH
+   * Derive the 32-byte ECDH key-encryption key.
+   *
+   * SJS-B-009: the old implementation hashed the wrong bytes — `slice(2, 66)` on
+   * the `0x04‖x‖y` point took the `04` prefix plus the first 31 bytes of x,
+   * DROPPING x's last byte, then bare-SHA-256'd it with no salt and no domain
+   * separation. It also mangled any `0x`-prefixed or compressed peer key. Now:
+   * the peer key is normalized to an uncompressed point (accepting `0x`-prefixed,
+   * bare, and compressed 02/03 forms), the FULL 32-byte x-coordinate is taken,
+   * and HKDF-SHA256(x, salt, info) derives the KEK — matching the Python SDK.
    */
-  async deriveSharedKey(peerPublicKey: string): Promise<Uint8Array> {
-    // Use ethers' built-in ECDH implementation
+  async deriveSharedKey(
+    peerPublicKey: string,
+    opts: { salt: Uint8Array; info: Uint8Array },
+  ): Promise<Uint8Array> {
     const signingKey = this.wallet.signingKey;
-
-    // Ensure peer public key has proper format (uncompressed, 04 prefix)
-    let formattedPeerKey = peerPublicKey;
-    if (!formattedPeerKey.startsWith('04')) {
-      formattedPeerKey = '04' + formattedPeerKey;
-    }
-
-    // Compute ECDH shared point
-    const sharedPoint = signingKey.computeSharedSecret('0x' + formattedPeerKey);
-
-    // Use x-coordinate as shared secret and hash it for key derivation
-    const sharedSecret = await this.cryptoManager.hashData(
-      this.cryptoManager.hexToBytes(sharedPoint.slice(2, 66)) // First 32 bytes (x-coordinate)
-    );
-
-    return this.cryptoManager.hexToBytes(sharedSecret);
+    const normalized = canonicalPubHex(peerPublicKey); // uncompressed, no 0x
+    const sharedPoint = signingKey.computeSharedSecret('0x' + normalized); // 0x04 ‖ x ‖ y
+    // Full 32-byte x-coordinate: skip '0x' (2) + '04' (2) = index 4, take 64 hex.
+    const x = this.cryptoManager.hexToBytes(sharedPoint.slice(4, 68));
+    const kek = await this.cryptoManager.hkdfSha256(x, opts.salt, opts.info, 32);
+    x.fill(0);
+    return kek;
   }
 
   /**
@@ -260,10 +390,11 @@ export class KeyManager {
     // SHA-256(privateKey) — deterministic and globally reusable across every
     // wrapped key. Audit: CITRATE_SDK_JS-2026-05-31-002 (HIGH).
     const salt = this.cryptoManager.generateRandomBytes(16);
-    const ownerKeyBytes = await this.cryptoManager.deriveKey(
-      `citrate-model-key-wrap-v1:${this.wallet.privateKey}`,
-      salt
-    );
+    // SJS-B-011: build the PBKDF2 password as bytes we can wipe, rather than a
+    // template literal that interns a fresh copy of the raw private key.
+    const password = this.wrapPasswordBytes();
+    const ownerKeyBytes = await this.cryptoManager.deriveKeyBytes(password, salt);
+    password.fill(0);
 
     const encrypted = await this.cryptoManager.encryptAES(key, ownerKeyBytes);
 
@@ -286,10 +417,13 @@ export class KeyManager {
     let ownerKeyBytes: Uint8Array;
     if (typeof package_.salt === 'string' && package_.salt.length > 0) {
       // v2: salted PBKDF2 derivation (current). Audit CITRATE_SDK_JS-...-002.
-      ownerKeyBytes = await this.cryptoManager.deriveKey(
-        `citrate-model-key-wrap-v1:${this.wallet.privateKey}`,
+      // SJS-B-011: wipeable byte password rather than a template literal.
+      const password = this.wrapPasswordBytes();
+      ownerKeyBytes = await this.cryptoManager.deriveKeyBytes(
+        password,
         this.cryptoManager.hexToBytes(package_.salt)
       );
+      password.fill(0);
     } else {
       // v1 legacy: unsalted SHA-256(privateKey). Retained read-only so packages
       // wrapped before the KDF hardening can still be decrypted (no regression).
@@ -304,6 +438,21 @@ export class KeyManager {
     const authTag = this.cryptoManager.hexToBytes(package_.authTag);
 
     return await this.cryptoManager.decryptAES(encryptedKey, ownerKeyBytes, nonce, authTag);
+  }
+
+  /**
+   * Build the owner-wrap PBKDF2 password as wipeable bytes:
+   * `utf8("citrate-model-key-wrap-v1:") ‖ privateKeyBytes` (SJS-B-011). The
+   * caller `.fill(0)`s the returned array after deriving.
+   */
+  private wrapPasswordBytes(): Uint8Array {
+    const domain = new TextEncoder().encode('citrate-model-key-wrap-v1:');
+    const priv = this.cryptoManager.hexToBytes(this.wallet.privateKey.slice(2));
+    const out = new Uint8Array(domain.length + priv.length);
+    out.set(domain);
+    out.set(priv, domain.length);
+    priv.fill(0);
+    return out;
   }
 
   /**

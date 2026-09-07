@@ -48,7 +48,8 @@ function makeFetch(userinfoBody: Record<string, unknown>): FetchLike {
   return (url) => {
     if (url === ID.discovery) return ok(discovery);
     if (url === discovery.jwks_uri) return ok({ keys: JWKS });
-    if (url === discovery.token_endpoint) return ok({ id_token: idToken({}), access_token: 'at-1', refresh_token: 'rt-1' });
+    // SJS-B-007: the ID token carries the nonce the exchange asserts ('no').
+    if (url === discovery.token_endpoint) return ok({ id_token: idToken({ nonce: 'no' }), access_token: 'at-1', refresh_token: 'rt-1' });
     if (url === discovery.userinfo_endpoint) return ok(userinfoBody);
     if (url === `${ID.issuer}/aa/enroll-validator`) return ok({ digest: '0xd1', signature: '0x51', factory: 'f' });
     return Promise.resolve({ ok: false, status: 404, json: async () => ({}), text: async () => 'not found' });
@@ -70,10 +71,22 @@ describe('IdentityClient.authorizeUrl', () => {
 describe('IdentityClient.exchangeCode', () => {
   it('exchanges a code and verifies the returned ID token', async () => {
     const client = new IdentityClient({ clientId: CLIENT_ID, redirectUri: 'http://127.0.0.1:8899/auth/callback', fetch: makeFetch({}) });
-    const tokens = await client.exchangeCode({ code: 'abc', codeVerifier: 'v'.repeat(43) });
+    // SJS-B-007: nonce is required — the same value threaded through authorizeUrl.
+    const tokens = await client.exchangeCode({ code: 'abc', codeVerifier: 'v'.repeat(43), nonce: 'no' });
     expect(tokens.claims.sub).toBe('user-1');
     expect(tokens.accessToken).toBe('at-1');
     expect(tokens.refreshToken).toBe('rt-1');
+  });
+
+  it('SJS-B-007: exchangeCode rejects a missing/empty nonce (no silent skip of the ID-token binding)', async () => {
+    const client = new IdentityClient({ clientId: CLIENT_ID, redirectUri: 'x', fetch: makeFetch({}) });
+    await expect(
+      // @ts-expect-error nonce is required — omitting it must not typecheck
+      client.exchangeCode({ code: 'abc', codeVerifier: 'v'.repeat(43) }),
+    ).rejects.toThrow(/nonce/);
+    await expect(
+      client.exchangeCode({ code: 'abc', codeVerifier: 'v'.repeat(43), nonce: '' }),
+    ).rejects.toThrow(/nonce/);
   });
 });
 

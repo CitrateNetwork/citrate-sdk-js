@@ -143,6 +143,66 @@ export class CryptoManager {
   }
 
   /**
+   * HKDF-SHA256 (RFC 5869) — extract-and-expand key derivation. Used to derive
+   * the ECDH key-encryption key from the raw shared secret with a per-message
+   * salt and a domain-separating `info` that binds both endpoint public keys
+   * (SJS-B-009). Returns `length` bytes (default 32).
+   *
+   * This replaces the prior bare `SHA-256(x-coordinate)`, which had no salt, no
+   * domain separation, and — via a slice bug — dropped a byte of the shared
+   * secret. HKDF here matches the citrate-sdk-python V2 envelope so the two SDKs
+   * can interoperate when fed identical (ikm, salt, info).
+   */
+  async hkdfSha256(
+    ikm: Uint8Array,
+    salt: Uint8Array,
+    info: Uint8Array,
+    length = 32,
+  ): Promise<Uint8Array> {
+    const subtle = ensureWebCrypto();
+    const baseKey = await subtle.importKey('raw', ikm as BufferSource, 'HKDF', false, [
+      'deriveBits',
+    ]);
+    const bits = await subtle.deriveBits(
+      { name: 'HKDF', hash: 'SHA-256', salt: salt as BufferSource, info: info as BufferSource },
+      baseKey,
+      length * 8,
+    );
+    return new Uint8Array(bits);
+  }
+
+  /**
+   * Derive a 32-byte key from raw password *bytes* + salt using PBKDF2-SHA256.
+   *
+   * SJS-B-011: the string-based `deriveKey` forces callers to build the password
+   * as a template literal — `` `…:${wallet.privateKey}` `` — which interns a
+   * fresh, immutable, unwipeable copy of the raw private key on every wrap/unwrap
+   * on a hot path. This byte-oriented variant lets `KeyManager` assemble the
+   * password in a `Uint8Array` it can `.fill(0)` afterwards, so the key material
+   * is not re-stringified per operation.
+   */
+  async deriveKeyBytes(
+    passwordBytes: Uint8Array,
+    salt: Uint8Array,
+    iterations = PBKDF2_DEFAULT_ITERATIONS,
+  ): Promise<Uint8Array> {
+    const subtle = ensureWebCrypto();
+    const baseKey = await subtle.importKey(
+      'raw',
+      passwordBytes as BufferSource,
+      { name: 'PBKDF2' },
+      false,
+      ['deriveBits'],
+    );
+    const bits = await subtle.deriveBits(
+      { name: 'PBKDF2', salt: salt as BufferSource, iterations, hash: 'SHA-256' },
+      baseKey,
+      32 * 8,
+    );
+    return new Uint8Array(bits);
+  }
+
+  /**
    * Generate HMAC-SHA256 over `data` keyed by `key`. Returns
    * lowercase hex.
    */

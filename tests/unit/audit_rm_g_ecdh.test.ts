@@ -30,7 +30,12 @@ describe('RM-G.3 — encryptData ECDH-wraps the key', () => {
     expect(pkg.key).toBeUndefined();
     expect(pkg.wrappedKey).toBeDefined();
     expect(pkg.senderPublicKey).toBeDefined();
-    expect(pkg.scheme).toBe('ecdh-secp256k1-aesgcm-v1');
+    // SJS-B-004 / SJS-B-009 / RC-8: the envelope is now V2 — a per-message
+    // kdfSalt and both endpoint keys are bound into the KEK. V1 (constant
+    // derivation, no key binding) is refused on read.
+    expect(pkg.scheme).toBe('ecdh-secp256k1-aesgcm-v2');
+    expect(pkg.kdfSalt).toBeDefined();
+    expect(pkg.recipientPublicKey).toBeDefined();
   });
 
   it('round-trips: the intended recipient can decrypt', async () => {

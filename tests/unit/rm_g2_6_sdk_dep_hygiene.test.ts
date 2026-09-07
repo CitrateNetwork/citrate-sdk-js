@@ -12,8 +12,54 @@
  *     `http://localhost:5001`.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { CryptoManager } from '../../src/crypto/CryptoManager';
 import { CitrateClient } from '../../src/client/CitrateClient';
+
+/** Parse `major.minor.patch` (ignoring any suffix) into a comparable tuple. */
+function semverGte(v: string, min: string): boolean {
+  const p = (s: string) => s.replace(/^[^0-9]*/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const [a, b, c] = p(v);
+  const [x, y, z] = p(min);
+  if (a! !== x!) return a! > x!;
+  if (b! !== y!) return b! > y!;
+  return c! >= z!;
+}
+
+describe('SJS-B-006 — prod transitive advisories pinned out via overrides', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../../package.json'), 'utf8'));
+
+  test('package.json declares ws/form-data overrides past the advisory floors', () => {
+    expect(pkg.overrides).toBeDefined();
+    // ws: GHSA-58qx-3vcg-4xpx + GHSA-96hv-2xvq-fx4p fixed in 8.21.0.
+    expect(pkg.overrides.ws).toBeDefined();
+    expect(semverGte(pkg.overrides.ws, '8.21.0')).toBe(true);
+    // form-data: GHSA-hmw2-7cc7-3qxx (CRLF injection) fixed in 4.0.6.
+    expect(pkg.overrides['form-data']).toBeDefined();
+    expect(semverGte(pkg.overrides['form-data'], '4.0.6')).toBe(true);
+  });
+
+  test('the resolved lockfile carries ws >= 8.21.0 and form-data >= 4.0.6', () => {
+    const lock = JSON.parse(
+      fs.readFileSync(path.join(__dirname, '../../package-lock.json'), 'utf8'),
+    );
+    const pkgs: Record<string, { version?: string }> = lock.packages ?? {};
+    const versionsOf = (name: string) =>
+      Object.entries(pkgs)
+        .filter(([p]) => p.endsWith(`node_modules/${name}`))
+        .map(([, v]) => v.version)
+        .filter((v): v is string => typeof v === 'string');
+
+    const ws = versionsOf('ws');
+    expect(ws.length).toBeGreaterThan(0);
+    for (const v of ws) expect(semverGte(v, '8.21.0')).toBe(true);
+
+    const fd = versionsOf('form-data');
+    expect(fd.length).toBeGreaterThan(0);
+    for (const v of fd) expect(semverGte(v, '4.0.6')).toBe(true);
+  });
+});
 
 describe('RM-G2.6 — CryptoManager (Web Crypto only)', () => {
   const cm = new CryptoManager();

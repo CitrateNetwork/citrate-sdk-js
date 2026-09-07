@@ -59,17 +59,23 @@ function mockTransport(
   return { captured, sendTransaction };
 }
 
+// SJS-B-003 / RC-8: build the receipt topic from the keccak of the event
+// signature (what a real node emits), NOT the impossible ASCII literal
+// '0xInferenceComplete' the pre-fix code matched. If this were still the ASCII
+// string, deployModel/inference would throw after broadcasting — the exact
+// defect. Derived from the same signature constant the client uses, so the two
+// cannot drift apart.
 function inferenceReceiptLogs(): Array<{ topics: string[]; data: string }> {
   return [
     {
-      topics: ['0xInferenceComplete'],
+      topics: [ethers.id('InferenceComplete(bytes32,bytes)')],
       data: ethers.hexlify(ethers.toUtf8Bytes(JSON.stringify({ result: 'ok' })))
     }
   ];
 }
 
 function deployReceiptLogs(): Array<{ topics: string[]; data: string }> {
-  return [{ topics: ['0xModelDeployed'], data: '0x' + 'ab'.repeat(64) }];
+  return [{ topics: [ethers.id('ModelDeployed(bytes32,address)')], data: '0x' + 'ab'.repeat(64) }];
 }
 
 function newClient(): CitrateClient {
