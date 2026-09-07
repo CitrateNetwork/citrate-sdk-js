@@ -16,6 +16,8 @@
  * required config field — no hostname is baked in.
  */
 
+import { enforceTransportSecurity } from '../utils/transport';
+
 export class MemoryError extends Error {
   constructor(
     message: string,
@@ -141,6 +143,9 @@ export interface MemoryClientConfig {
   /** OIDC id_token bearer, required for every `/api/orgs/*` route (not `health`). */
   idToken?: string;
   fetch?: MemoryFetch;
+  /** Opt in to a remote plaintext origin (SJS-B / SPY-B-009). The id_token is a
+   *  bearer credential; a remote `http://` origin is refused by default. */
+  allowInsecureHttp?: boolean;
 }
 
 function resolveFetch(f?: MemoryFetch): MemoryFetch {
@@ -175,7 +180,9 @@ export class MemoryClient {
 
   constructor(private readonly config: MemoryClientConfig) {
     if (!config.origin) throw new MemoryError('memory gateway origin not configured');
-    this.origin = config.origin.replace(/\/$/, '');
+    this.origin = enforceTransportSecurity(config.origin.replace(/\/$/, ''), {
+      allowInsecureHttp: config.allowInsecureHttp ?? false,
+    });
     this.fetch = resolveFetch(config.fetch);
   }
 
@@ -342,6 +349,8 @@ export interface ByomConfig {
   /** HS256 connect token (byte-matches the gateway's MEM_CONNECT_SECRET issuance). */
   connectToken: string;
   fetch?: MemoryFetch;
+  /** Opt in to a remote plaintext origin (SJS-B / SPY-B-009); refused by default. */
+  allowInsecureHttp?: boolean;
 }
 
 /**
@@ -359,7 +368,10 @@ export class ByomMemoryClient {
     if (!config.origin) throw new MemoryError('memory gateway origin not configured');
     if (!config.sub) throw new MemoryError('BYOM sub required');
     if (!config.connectToken) throw new MemoryError('BYOM connect token required');
-    this.url = `${config.origin.replace(/\/$/, '')}/mcp/u/${encodeURIComponent(config.sub)}`;
+    const origin = enforceTransportSecurity(config.origin.replace(/\/$/, ''), {
+      allowInsecureHttp: config.allowInsecureHttp ?? false,
+    });
+    this.url = `${origin}/mcp/u/${encodeURIComponent(config.sub)}`;
     this.fetch = resolveFetch(config.fetch);
   }
 

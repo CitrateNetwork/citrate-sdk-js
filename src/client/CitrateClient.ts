@@ -26,7 +26,19 @@ import {
   validatePrivateKey,
   validateRpcUrl
 } from '../utils/validation';
-import { PRECOMPILE_ADDRESSES } from '../utils/constants';
+import { PRECOMPILE_ADDRESSES, SDK_VERSION } from '../utils/constants';
+import { enforceTransportSecurity } from '../utils/transport';
+
+// SJS-B-003 (mirrors Python SPY-B-006): receipt log topics are keccak256 of the
+// event signature, NOT the ASCII hex of the event name. The pre-fix matcher
+// compared topics[0] against `'0x' + 'ModelDeployed'.slice(0,8)` === `'0xModelDep'`,
+// which contains characters ('M','o','d','l','P') that cannot appear in a hex
+// topic, so it NEVER matched and both flagship methods always threw AFTER
+// broadcasting (and paying gas). Match the real keccak topic via `ethers.id`.
+// If the node's ABI differs, change the signature here — one place, and the
+// fixture derives its topic from the same constant so the two cannot drift.
+export const MODEL_DEPLOYED_EVENT_SIGNATURE = 'ModelDeployed(bytes32,address)';
+export const INFERENCE_COMPLETE_EVENT_SIGNATURE = 'InferenceComplete(bytes32,bytes)';
 
 export interface CitrateClientConfig {
   /**
@@ -48,18 +60,36 @@ export interface CitrateClientConfig {
    * everyone except the one operator running ipfs locally.
    */
   ipfsApiUrl?: string;
+  /**
+   * Opt in to remote plaintext transport (SJS-B / SPY-B-009). By default the
+   * client FAILS CLOSED on a remote `http://`/`ws://` RPC or IPFS endpoint —
+   * signed transactions, private inputs and any credentials would otherwise go
+   * out in cleartext. Loopback/localhost is always allowed. Set true only for a
+   * trusted internal network without TLS.
+   */
+  allowInsecureHttp?: boolean;
 }
 
 export class CitrateClient {
-  private provider: ethers.JsonRpcProvider;
+  private provider: ethers.JsonRpcProvider | ethers.FallbackProvider;
   private wallet?: ethers.Wallet;
   private axios: AxiosInstance;
+  /**
+   * SJS-B-008 — one axios instance per RPC URL, primary first. `rpcCall`
+   * iterates this list on transport errors so a single broken endpoint does not
+   * take the integration down. Before this fix the advertised multi-RPC
+   * failover did not exist: `selectRpc` was named in a comment but never
+   * implemented, and every request went to `rpcUrls[0]` only.
+   */
+  private readonly axiosPool: AxiosInstance[];
   private keyManager?: KeyManager;
   private cryptoManager: CryptoManager;
   /** RM-G2.6 / SDK-02 — full fallback list, primary first. */
   private readonly rpcUrls: readonly string[];
   /** RM-G2.6 / SDK-01 — undefined means "no IPFS configured". */
   private readonly ipfsApiUrl: string | undefined;
+  /** SJS-B / SPY-B-009 — opt-in to remote plaintext endpoints. */
+  private readonly allowInsecureHttp: boolean;
 
   constructor(config: CitrateClientConfig) {
     this.rpcUrls = Array.isArray(config.rpcUrl)
@@ -79,13 +109,27 @@ export class CitrateClient {
     if (config.privateKey !== undefined && !validatePrivateKey(config.privateKey)) {
       throw new ValidationError('CitrateClient: invalid private key format');
     }
+    this.allowInsecureHttp = config.allowInsecureHttp ?? false;
+    // SJS-B / SPY-B-009: fail closed on a remote plaintext RPC endpoint before
+    // any provider is built. Loopback passes; the caller opts in for internal
+    // TLS-less networks via allowInsecureHttp.
+    for (const url of this.rpcUrls) {
+      enforceTransportSecurity(url, { allowInsecureHttp: this.allowInsecureHttp });
+    }
     const primaryRpc = this.rpcUrls[0] as string;
 
-    // Initialize provider against the first URL. ethers.FallbackProvider
-    // would do automatic failover but doubles the connection budget;
-    // for simplicity we hold the list and let `selectRpc` rotate
-    // per-request on transport errors.
-    this.provider = new ethers.JsonRpcProvider(primaryRpc);
+    // Initialize provider. With a single URL this is a plain JsonRpcProvider;
+    // with several, ethers.FallbackProvider gives genuine automatic failover so
+    // the multi-RPC claim in CitrateClientConfig is actually true (SJS-B-008).
+    this.provider = this.rpcUrls.length > 1
+      ? new ethers.FallbackProvider(
+          this.rpcUrls.map((u, i) => ({
+            provider: new ethers.JsonRpcProvider(u),
+            priority: i + 1,
+            weight: 1,
+          })),
+        )
+      : new ethers.JsonRpcProvider(primaryRpc);
 
     // Initialize wallet if private key provided
     if (config.privateKey) {
@@ -93,16 +137,17 @@ export class CitrateClient {
       this.keyManager = new KeyManager(config.privateKey);
     }
 
-    // Initialize HTTP client
-    this.axios = axios.create({
-      baseURL: primaryRpc,
-      timeout: config.timeout || 30000,
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'citrate-js-sdk/0.1.0',
-        ...config.headers
-      }
-    });
+    // Initialize one HTTP client per RPC URL so rpcCall can fail over. The UA is
+    // derived from SDK_VERSION (SJS-B-H03) rather than a hardcoded stale string.
+    const headers = {
+      'Content-Type': 'application/json',
+      'User-Agent': `citrate-js-sdk/${SDK_VERSION}`,
+      ...config.headers,
+    };
+    this.axiosPool = this.rpcUrls.map((url) =>
+      axios.create({ baseURL: url, timeout: config.timeout || 30000, headers }),
+    );
+    this.axios = this.axiosPool[0] as AxiosInstance;
 
     this.ipfsApiUrl = config.ipfsApiUrl;
 
@@ -122,28 +167,30 @@ export class CitrateClient {
   }
 
   private setupAxiosInterceptors(): void {
-    // Request interceptor for logging
-    this.axios.interceptors.request.use(
-      (config) => {
-        console.debug('Citrate API Request:', config.method?.toUpperCase(), config.url);
-        return config;
-      },
-      (error) => Promise.reject(error)
-    );
+    for (const instance of this.axiosPool) {
+      // Request interceptor for logging
+      instance.interceptors.request.use(
+        (config) => {
+          console.debug('Citrate API Request:', config.method?.toUpperCase(), config.url);
+          return config;
+        },
+        (error) => Promise.reject(error)
+      );
 
-    // Response interceptor for error handling
-    this.axios.interceptors.response.use(
-      (response) => response,
-      (error) => {
-        if (error.response?.data?.error) {
-          throw new CitrateError(
-            error.response.data.error.message || 'API Error',
-            error.response.data.error.code?.toString()
-          );
+      // Response interceptor for error handling
+      instance.interceptors.response.use(
+        (response) => response,
+        (error) => {
+          if (error.response?.data?.error) {
+            throw new CitrateError(
+              error.response.data.error.message || 'API Error',
+              error.response.data.error.code?.toString()
+            );
+          }
+          throw new CitrateError(`Network error: ${error.message}`);
         }
-        throw new CitrateError(`Network error: ${error.message}`);
-      }
-    );
+      );
+    }
   }
 
   // Connection methods
@@ -498,19 +545,42 @@ export class CitrateClient {
   }
 
   // Private helper methods
+  //
+  // SJS-B-008: iterate the axios pool (one instance per RPC URL) so a single
+  // broken endpoint does not take the call down. A *transport* error (no
+  // response — DNS, connection refused, timeout) rotates to the next endpoint;
+  // a JSON-RPC error carried in a 2xx body is a real protocol answer and is NOT
+  // retried (retrying it would just duplicate the request against every node).
   private async rpcCall(method: string, params: any[] = []): Promise<any> {
-    const response: AxiosResponse = await this.axios.post('', {
+    const payload = {
       jsonrpc: '2.0',
       method,
       params,
-      id: Math.floor(Math.random() * 10000)
-    });
+      id: Math.floor(Math.random() * 10000),
+    };
 
-    if (response.data.error) {
-      throw new CitrateError(response.data.error.message);
+    let lastError: unknown;
+    for (let i = 0; i < this.axiosPool.length; i++) {
+      const instance = this.axiosPool[i] as AxiosInstance;
+      try {
+        const response: AxiosResponse = await instance.post('', payload);
+        if (response.data.error) {
+          throw new CitrateError(response.data.error.message);
+        }
+        return response.data.result;
+      } catch (error) {
+        // A CitrateError raised from a JSON-RPC error body is an authoritative
+        // answer from a reachable node — surface it, do not fail over.
+        if (error instanceof CitrateError && !/^Network error:/.test(error.message)) {
+          throw error;
+        }
+        lastError = error;
+        // otherwise: transport failure — try the next endpoint.
+      }
     }
-
-    return response.data.result;
+    throw lastError instanceof Error
+      ? lastError
+      : new CitrateError('rpcCall: all RPC endpoints failed');
   }
 
   private async uploadToIPFS(data: Uint8Array): Promise<string> {
@@ -525,51 +595,93 @@ export class CitrateClient {
       return `sha256:${hash}`;
     }
 
-    try {
-      const formData = new FormData();
-      const blob = new Blob([data.buffer as ArrayBuffer], { type: 'application/octet-stream' });
-      formData.append('file', blob, 'model_data');
+    // SJS-B / SPY-B-009: refuse to POST the (possibly private) artifact to a
+    // remote plaintext IPFS endpoint unless the caller opted in.
+    const base = enforceTransportSecurity(this.ipfsApiUrl.replace(/\/+$/, ''), {
+      allowInsecureHttp: this.allowInsecureHttp,
+    });
 
-      const url = `${this.ipfsApiUrl.replace(/\/+$/, '')}/api/v0/add?pin=true`;
-      const response = await fetch(url, {
+    // SJS-B-005 (mirrors Python CIT-SDKPY-03): FAIL CLOSED. This previously
+    // swallowed any upload error, logged a console.warn, and returned a
+    // `sha256:<hash>` pseudo-pointer — so `deployModel` recorded a permanent
+    // on-chain artifact pointer to bytes that exist nowhere, while the caller
+    // (who routinely does not read console.warn) believed it succeeded. A
+    // hostile or misconfigured endpoint could force every deployment to be a
+    // silent dud. Surface the failure instead: the caller decides whether to
+    // retry or fall back to a content hash, rather than the SDK deciding
+    // silently. When no IPFS endpoint is configured the hash-only pointer above
+    // is the explicit, documented opt-out.
+    const formData = new FormData();
+    const blob = new Blob([data.buffer as ArrayBuffer], { type: 'application/octet-stream' });
+    formData.append('file', blob, 'model_data');
+
+    const url = `${base}/api/v0/add?pin=true`;
+    let response: Response;
+    try {
+      response = await fetch(url, {
         method: 'POST',
         body: formData,
+        // Bound the request so a hanging endpoint cannot wedge a deployment.
+        signal: AbortSignal.timeout(60_000),
       });
-
-      if (response.ok) {
-        const result = await response.json();
-        return result.Hash;
-      } else {
-        throw new Error(`IPFS upload failed: ${response.status}`);
-      }
     } catch (error) {
-      console.warn('IPFS upload failed, using sha256 fallback:', error);
-      const hash = await this.cryptoManager.hashData(data);
-      return `sha256:${hash}`;
+      throw new CitrateError(
+        `IPFS upload to ${base} failed at the transport layer: ` +
+          `${error instanceof Error ? error.message : String(error)}. ` +
+          'Refusing to record a non-retrievable artifact pointer on-chain ' +
+          '(SJS-B-005). Fix the endpoint or omit ipfsApiUrl to use a content hash.',
+      );
     }
+
+    if (!response.ok) {
+      throw new CitrateError(
+        `IPFS upload to ${base} failed: HTTP ${response.status}. ` +
+          'Refusing to record a non-retrievable artifact pointer on-chain ' +
+          '(SJS-B-005).',
+      );
+    }
+    const result = await response.json();
+    if (!result || typeof result.Hash !== 'string' || result.Hash.length === 0) {
+      throw new CitrateError(
+        `IPFS upload to ${base} returned no CID (malformed add response). ` +
+          'Refusing to record a non-retrievable artifact pointer on-chain (SJS-B-005).',
+      );
+    }
+    return result.Hash;
   }
 
   private extractModelIdFromReceipt(receipt: ethers.TransactionReceipt): string {
-    // Extract model ID from deployment receipt logs
+    // SJS-B-003: match the real keccak topic, not the impossible ASCII literal.
+    const wantTopic = ethers.id(MODEL_DEPLOYED_EVENT_SIGNATURE);
     for (const log of receipt.logs) {
       try {
-        // Look for ModelDeployed event
-        if (log.topics[0]?.startsWith('0x' + 'ModelDeployed'.slice(0, 8))) {
-          return log.data.slice(0, 66); // First 32 bytes as hex
+        if (log.topics[0]?.toLowerCase() === wantTopic) {
+          // Prefer the indexed modelId in topics[1]; fall back to the first
+          // 32 bytes of data for a non-indexed emitter.
+          const indexed = log.topics[1];
+          if (typeof indexed === 'string' && indexed.length === 66) return indexed;
+          return log.data.slice(0, 66);
         }
       } catch (error) {
         continue;
       }
     }
 
-    throw new CitrateError('Model ID not found in deployment receipt');
+    // Include the tx hash so a caller can recover (look the tx up, decode it
+    // themselves) instead of blindly retrying and paying gas again — the money
+    // cost this defect used to impose.
+    throw new CitrateError(
+      `Model ID not found in deployment receipt (tx ${receipt.hash}). ` +
+        'The transaction was broadcast and confirmed; do not retry blindly.',
+    );
   }
 
   private extractInferenceOutput(receipt: ethers.TransactionReceipt): any {
-    // Extract inference output from execution receipt
+    // SJS-B-003: match the real keccak topic, not the impossible ASCII literal.
+    const wantTopic = ethers.id(INFERENCE_COMPLETE_EVENT_SIGNATURE);
     for (const log of receipt.logs) {
       try {
-        if (log.topics[0]?.startsWith('0x' + 'InferenceComplete'.slice(0, 8))) {
+        if (log.topics[0]?.toLowerCase() === wantTopic) {
           const dataBytes = ethers.getBytes(log.data);
           const jsonStr = ethers.toUtf8String(dataBytes);
           return JSON.parse(jsonStr);
@@ -579,6 +691,9 @@ export class CitrateClient {
       }
     }
 
-    throw new CitrateError('Inference output not found in receipt');
+    throw new CitrateError(
+      `Inference output not found in receipt (tx ${receipt.hash}). ` +
+        'The transaction was broadcast and confirmed; do not retry blindly.',
+    );
   }
 }

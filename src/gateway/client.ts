@@ -7,6 +7,7 @@
  * typed error, never a silent call to an open endpoint or a fabricated response.
  */
 import { FEDERATION_CONTRACT } from '../generated/contract';
+import { enforceTransportSecurity } from '../utils/transport';
 
 const GW = FEDERATION_CONTRACT.gateway;
 
@@ -45,6 +46,12 @@ export interface GatewayClientConfig {
   /** Defaults to the artifact gateway base URL (https://infer.citrate.ai). */
   baseUrl?: string;
   fetch?: GatewayFetch;
+  /**
+   * Opt in to a remote plaintext base URL (SJS-B / SPY-B-009). By default a
+   * remote `http://` base is refused — the `cgk_` key is a bearer credential and
+   * would go out in cleartext. Loopback is always allowed.
+   */
+  allowInsecureHttp?: boolean;
 }
 
 export class GatewayClient {
@@ -56,7 +63,10 @@ export class GatewayClient {
     const f = config.fetch ?? (globalThis.fetch as unknown as GatewayFetch | undefined);
     if (!f) throw new GatewayError('no fetch implementation available; pass config.fetch');
     this.fetch = f;
-    this.baseUrl = (config.baseUrl ?? GW.baseUrl).replace(/\/$/, '');
+    this.baseUrl = enforceTransportSecurity(
+      (config.baseUrl ?? GW.baseUrl).replace(/\/$/, ''),
+      { allowInsecureHttp: config.allowInsecureHttp ?? false },
+    );
   }
 
   /** POST /v1/chat/completions — OpenAI-shaped request and response. */
