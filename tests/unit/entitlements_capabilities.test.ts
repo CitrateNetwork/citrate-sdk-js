@@ -49,8 +49,10 @@ describe('can() — expiry + role bypass semantics', () => {
     expect(can({ tier: 'public' }, 'confidentialDocs')).toBe(false);
   });
 
-  it('a role-bearing principal bypasses the gate regardless of tier', () => {
-    expect(can({ tier: 'public', citrateRole: 'auditor' }, 'confidentialDocs')).toBe(true);
+  it('an unallowlisted role does NOT bypass the gate (SJS-B-001 — no blanket escalation)', () => {
+    // Was `.toBe(true)`: any truthy citrateRole granted confidentialDocs at any tier. A role
+    // absent from ROLE_CAPABILITIES now derives capabilities from the tier — public here.
+    expect(can({ tier: 'public', citrateRole: 'auditor' }, 'confidentialDocs')).toBe(false);
   });
 
   it('an expired claim collapses to public', () => {

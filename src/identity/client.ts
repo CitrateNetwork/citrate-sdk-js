@@ -9,7 +9,7 @@
  * claim, and returns typed errors rather than guesses. `fetch` is injectable for testing.
  */
 import { FEDERATION_CONTRACT } from '../generated/contract';
-import { capabilities, normalizeTier, type CapabilitySet, type Tier } from '../entitlements/capabilities';
+import { resolveCapabilities, normalizeTier, type CapabilitySet, type Tier } from '../entitlements/capabilities';
 import { createPkce, type Pkce } from './pkce';
 import { verifyIdToken, type IdTokenClaims, type Jwk } from './jwt';
 
@@ -194,17 +194,24 @@ export class IdentityClient {
   async userInfo(accessToken: string): Promise<UserInfo> {
     const disc = await this.discover();
     const raw = (await this.getJson(disc.userinfo_endpoint, accessToken)) as Record<string, unknown>;
-    const entitlement = raw[ID.entitlementClaim] as { tier?: unknown; citrateRole?: string } | undefined;
+    const entitlement = raw[ID.entitlementClaim] as
+      | { tier?: unknown; citrateRole?: string; expiresAt?: number | null }
+      | undefined;
     const tier = normalizeTier(entitlement?.tier);
+    // SJS-B-001 was: `{ecosystemTx,gatewayKeys,academicData,confidentialDocs}: true` for ANY
+    // truthy `citrateRole`, granting confidential access to any role at any tier.
+    // SJS-B-002: this inline copy also omitted the `expiresAt` fail-safe that `can()` honours,
+    // so an expired claim kept full capabilities here while `can()` collapsed it to public — one
+    // policy, two answers. Route through the single canonical resolver (`resolveCapabilities`,
+    // the same one `can` uses) so a role escalates only via the ROLE_CAPABILITIES allowlist AND
+    // an expired claim collapses to public — no inline duplicate, no divergence on expiry.
     return {
       sub: String(raw['sub'] ?? ''),
       ...(typeof raw['wallet_address'] === 'string' ? { walletAddress: raw['wallet_address'] } : {}),
       ...(Array.isArray(raw['wallets']) ? { wallets: raw['wallets'] as string[] } : {}),
       ...(typeof raw['kyc_status'] === 'string' ? { kycStatus: raw['kyc_status'] } : {}),
       tier,
-      capabilities: entitlement?.citrateRole
-        ? { ecosystemTx: true, gatewayKeys: true, academicData: true, confidentialDocs: true }
-        : capabilities(tier),
+      capabilities: resolveCapabilities(entitlement),
       raw,
     };
   }
