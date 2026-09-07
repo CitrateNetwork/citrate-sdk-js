@@ -96,11 +96,22 @@ describe('IdentityClient.userInfo — normalized capabilities', () => {
     expect(info.capabilities.ecosystemTx).toBe(false);
   });
 
-  it('a role-bearing principal is granted all capabilities', async () => {
+  it('an unallowlisted role does NOT get confidential capabilities (SJS-B-001)', async () => {
+    // Was `.toBe(true)`: the inline copy granted the full capability set to any truthy role.
+    // userInfo now routes through resolveCapabilities — an unallowlisted role falls back to tier.
     const body = { sub: 'auditor-1', [ID.entitlementClaim]: { tier: 'public', citrateRole: 'auditor' } };
     const client = new IdentityClient({ clientId: CLIENT_ID, redirectUri: 'x', fetch: makeFetch(body) });
     const info = await client.userInfo('at-1');
-    expect(info.capabilities.confidentialDocs).toBe(true);
+    expect(info.capabilities.confidentialDocs).toBe(false);
+  });
+
+  it('an expired claim collapses to public through the spine (SJS-B-002)', async () => {
+    const body = { sub: 'user-1', [ID.entitlementClaim]: { tier: 'confidential', expiresAt: Date.now() - 86_400_000 } };
+    const client = new IdentityClient({ clientId: CLIENT_ID, redirectUri: 'x', fetch: makeFetch(body) });
+    const info = await client.userInfo('at-1');
+    // Was granted full caps: userInfo never read expiresAt while can() honoured it.
+    expect(info.capabilities.confidentialDocs).toBe(false);
+    expect(info.capabilities.ecosystemTx).toBe(false);
   });
 });
 

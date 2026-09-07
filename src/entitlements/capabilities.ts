@@ -62,6 +62,20 @@ export const DEFAULT_CAPABILITIES: Readonly<Record<Tier, CapabilitySet>> = {
 const TIER_SET: ReadonlySet<string> = new Set(TIERS);
 
 /**
+ * EXPLICIT allowlist of `citrateRole` values that carry capabilities beyond the principal's
+ * tier, replacing the blanket `if (claim.citrateRole) return true;` bypass that granted EVERY
+ * capability — including `confidentialDocs` — to ANY truthy role, at ANY tier (SJS-B-001).
+ *
+ * A role absent from this map does NOT escalate: capabilities fall back to the tier — the same
+ * fail-safe `normalizeTier` applies to unknown tiers. The authority's `resolveEntitlementClaim`
+ * (citrate-identity src/entitlements.ts) uses `citrateRole` only to exempt a principal from the
+ * consumer-KYC *downgrade*; the tier it returns is what confers capabilities, so a role never
+ * itself buys confidential access. The canonical default is therefore EMPTY. A relying party
+ * that genuinely elevates a specific role registers it here explicitly.
+ */
+export const ROLE_CAPABILITIES: Readonly<Record<string, CapabilitySet>> = {};
+
+/**
  * Normalize an entitlement tier value at the trust boundary. Unknown/garbage collapses to
  * `public` and is NEVER escalated — the fail-safe that would have prevented the Atlas crash.
  */
@@ -88,20 +102,58 @@ export function capabilities(
 }
 
 /**
- * Whether a claim grants a capability. Applies the same fail-safe + role-bypass semantics as
- * the authority's `resolveEntitlementClaim`: an expired claim is `public`; a role-bearing
- * principal is granted the capability regardless of tier.
+ * Resolve a claim's capability set WITHOUT applying expiry.
+ *
+ * An allowlisted `citrateRole` (see `ROLE_CAPABILITIES`) grants its explicitly declared set;
+ * every other role — and no role — derives capabilities from the tier, fail-safe and never
+ * escalated (SJS-B-001). Expiry is NOT applied here; callers that must honour `expiresAt` use
+ * `resolveCapabilities`/`can`, which check it before delegating. This is the single resolver
+ * both `can` and the identity spine use, so the role policy cannot diverge between them.
+ */
+export function capabilitiesForClaim(
+  claim: EntitlementClaimLike | null | undefined,
+  overrides?: Partial<Record<Tier, CapabilitySet>>,
+): CapabilitySet {
+  if (!claim) return { ...DEFAULT_CAPABILITIES.public };
+  const role = claim.citrateRole;
+  if (typeof role === 'string') {
+    const roleCaps = ROLE_CAPABILITIES[role];
+    if (roleCaps) return { ...roleCaps };
+  }
+  return capabilities(claim.tier, overrides);
+}
+
+/**
+ * Resolve a claim's FULL capability set, honouring `expiresAt`.
+ *
+ * THE single policy implementation. Both `can` and the identity spine (`IdentityClient.userInfo`)
+ * route through it, so the expiry check cannot be present on one path and absent on the other
+ * (SJS-B-002): an expired claim collapses to `public` here, once, for every caller. Role
+ * escalation stays gated by the `ROLE_CAPABILITIES` allowlist via `capabilitiesForClaim`.
+ */
+export function resolveCapabilities(
+  claim: EntitlementClaimLike | null | undefined,
+  opts?: { now?: number; overrides?: Partial<Record<Tier, CapabilitySet>> },
+): CapabilitySet {
+  if (!claim) return { ...DEFAULT_CAPABILITIES.public };
+  const now = opts?.now ?? Date.now();
+  if (typeof claim.expiresAt === 'number' && claim.expiresAt <= now) {
+    return { ...DEFAULT_CAPABILITIES.public };
+  }
+  return capabilitiesForClaim(claim, opts?.overrides);
+}
+
+/**
+ * Whether a claim grants a capability. A thin projection of `resolveCapabilities` onto one
+ * capability — the same resolver the identity spine uses, so the two cannot diverge. An expired
+ * claim collapses to `public`; a `citrateRole` escalates only if it is in the `ROLE_CAPABILITIES`
+ * allowlist (matches `resolveEntitlementClaim`, which uses the role only to skip the KYC
+ * downgrade, never to confer confidential access).
  */
 export function can(
   claim: EntitlementClaimLike | null | undefined,
   capability: Capability,
   opts?: { now?: number; overrides?: Partial<Record<Tier, CapabilitySet>> },
 ): boolean {
-  if (!claim) return DEFAULT_CAPABILITIES.public[capability];
-  const now = opts?.now ?? Date.now();
-  if (typeof claim.expiresAt === 'number' && claim.expiresAt <= now) {
-    return DEFAULT_CAPABILITIES.public[capability];
-  }
-  if (claim.citrateRole) return true; // role bypass — matches resolveEntitlementClaim
-  return capabilities(claim.tier, opts?.overrides)[capability];
+  return resolveCapabilities(claim, opts)[capability];
 }
