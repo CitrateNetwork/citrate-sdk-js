@@ -1,4 +1,6 @@
 # citrate-sdk-js
+
+*Part of the **[Citrate Network](https://citrate.ai)** — own the means of computation. · [Docs](https://docs.citrate.ai) · [Run a node](https://citrate.ai/download) · [Contribute → free membership](https://github.com/CitrateNetwork/.github/blob/main/CONTRIBUTING.md)*
 > The canonical TypeScript/JavaScript SDK for the Citrate Network (chain **40204**) — talk to the chain, deploy and run models, and call the inference gateway from Node or the browser.
 
 ## What it is
