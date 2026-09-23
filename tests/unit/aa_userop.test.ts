@@ -3,9 +3,10 @@
  *
  * Hash vector source (no mocks): the LIVE EntryPoint v0.7 on chain 40204, sourced
  * from the federation contract artifact (AA_ADDRESSES.EntryPoint =
- * 0xc698feaf0ff7fdb0d60e2f620c97cb729a694975). Re-earned 2026-07-25 (DEVX-S0) after
- * the 2026-07-23 deployer-key reroll retired the old EntryPoint
- * (0x4a86659B…, now empty code) via:
+ * 0x97d5391a647429233e202f99231743c53a648f3c). Re-earned 2026-09-23 (rpc.citrate.ai) after
+ * the 2026-09-20 state re-roll retired the prior EntryPoint (0xc698feaf…, now empty code) —
+ * the EntryPoint address is committed to the hash domain, so the vector moves with the
+ * artifact, never a hand-pinned constant. Re-verified via:
  *   cast call $EP 'getUserOpHash((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes))' \
  *     '(0x5cE3…,0,0x,0xdeadbeef,0x…0186a0,50000,0x…77359400,0x,0x)' --rpc-url https://rpc.citrate.ai
  * Encoding layouts are pinned to the vendored Kernel v3.3 + CitratePaymaster sources.
@@ -78,9 +79,9 @@ describe('getUserOpHash — parity with the LIVE EntryPoint v0.7 on 40204', () =
       maxPriorityFeePerGas: 1_000_000_000n,
       maxFeePerGas: 2_000_000_000n,
     });
-    // Re-earned 2026-07-25 vs live EntryPoint 0xc698feaf… on 40204 (see header).
+    // Re-earned 2026-09-23 vs live EntryPoint 0x97d5391a… on 40204 (see header).
     expect(getUserOpHash(op, ENTRY_POINT, CHAIN_ID)).toBe(
-      '0xba8ffd202fbc4ab5e6c8b3190631f39409351bbd1291d6a92d8d2082d269be02',
+      '0x1dd682cbe3426e879e981f22c131e8b18458f7d2b3157dce728ef48ca8cf6140',
     );
   });
 
