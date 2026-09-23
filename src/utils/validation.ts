@@ -272,7 +272,7 @@ export function sanitizeString(input: string, maxLength?: number): string {
   }
 
   // Remove any potentially dangerous characters
-  sanitized = sanitized.replace(/[<>\"'&]/g, '');
+  sanitized = sanitized.replace(/[<>"'&]/g, '');
 
   return sanitized;
 }
