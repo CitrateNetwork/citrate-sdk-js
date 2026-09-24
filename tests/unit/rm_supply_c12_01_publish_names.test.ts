@@ -20,7 +20,7 @@
  * enforcement rather than a re-implementation.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -218,5 +218,65 @@ describe('provenance-drift gate (real script, exit code)', () => {
     expect(reservation.sourceRepo).toBe('CitrateNetwork/citrate-sdk-js');
     expect(pkg.repository?.url).toContain(`github.com/${reservation.sourceRepo}`);
     expect(pkg.repository?.directory).toBeUndefined();
+  });
+});
+
+// 2026-09-24 pre-bounty audit (PBA-L6-004): the gate only read the ROOT
+// package.json, so the publishable compat shim (@citratelabs/citrate-js)
+// shipped with no repository at all. Every publishable package in the repo must
+// state the canonical source, with `directory` naming its real subpath.
+describe('provenance-drift gate covers publishable sub-packages', () => {
+  const cleanups: string[] = [];
+  afterAll(() => {
+    for (const dir of cleanups) rmSync(dir, { recursive: true, force: true });
+  });
+
+  const reservationFixture = {
+    registry: 'npmjs.org',
+    reserved: ['@fixture/sdk'],
+    sourceRepo: 'CitrateNetwork/fixture-repo',
+  };
+  const root = {
+    name: '@fixture/sdk',
+    publishConfig: { access: 'public', registry: 'https://registry.npmjs.org/' },
+    repository: { type: 'git', url: 'git+https://github.com/CitrateNetwork/fixture-repo.git' },
+  };
+
+  function withCompat(compatPkg: unknown): string {
+    const dir = makeFixture(root, reservationFixture);
+    mkdirSync(join(dir, 'compat', 'shim'), { recursive: true });
+    writeFileSync(join(dir, 'compat', 'shim', 'package.json'), JSON.stringify(compatPkg, null, 2));
+    cleanups.push(dir);
+    return dir;
+  }
+
+  test('RED: a publishable compat package with no repository fails', () => {
+    expect(runGate(withCompat({ name: '@fixture/shim', version: '1.0.0' }))).not.toBe(0);
+  });
+
+  test('RED: a compat package whose directory is not its real path fails', () => {
+    const dir = withCompat({
+      name: '@fixture/shim',
+      repository: { type: 'git', url: 'git+https://github.com/CitrateNetwork/fixture-repo.git', directory: 'sdks/javascript/shim' },
+    });
+    expect(runGate(dir)).not.toBe(0);
+  });
+
+  test('GREEN: a compat package with canonical url + real directory passes', () => {
+    const dir = withCompat({
+      name: '@fixture/shim',
+      repository: { type: 'git', url: 'git+https://github.com/CitrateNetwork/fixture-repo.git', directory: 'compat/shim' },
+    });
+    expect(runGate(dir)).toBe(0);
+  });
+
+  test('GREEN: a private compat package is not a publish target', () => {
+    expect(runGate(withCompat({ name: '@fixture/shim', private: true }))).toBe(0);
+  });
+
+  test('the real compat shim points at the canonical source', () => {
+    const compat = JSON.parse(readFileSync(join(repoRoot, 'compat', 'citrate-js', 'package.json'), 'utf8'));
+    expect(compat.repository?.url).toContain(`github.com/${reservation.sourceRepo}`);
+    expect(compat.repository?.directory).toBe('compat/citrate-js');
   });
 });
