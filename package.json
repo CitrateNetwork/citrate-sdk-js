@@ -1,6 +1,6 @@
 {
   "name": "@citratelabs/sdk",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Canonical TypeScript/JavaScript SDK for the Citrate distributed AI network. This is the canonical SDK — all other language SDKs are non-canonical until a real pilot integrator requires parity.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

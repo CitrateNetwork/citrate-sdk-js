@@ -20,7 +20,7 @@
  * permanent CI gate; the jest test wraps the same checks so it runs in the
  * unit suite too.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -109,7 +109,7 @@ export function checkPublishNames(root = repoRoot) {
   }
 
   // PROVENANCE (2026-08-01). The published 0.2.0 states its source is
-  // github.com/citrate-ai/citrate — an org that does not exist. The gate already
+  // the `citrate-ai` GitHub owner — which does not exist. The gate already
   // refused a drifted *registry*; it had nothing to say about a drifted *source*,
   // so the package shipped to npm advertising a 404 as its provenance. A consumer
   // who cannot reach the source cannot audit what they installed, which is the one
@@ -144,6 +144,37 @@ export function checkPublishNames(root = repoRoot) {
           `"${pkg.repository.directory}" is set, but this repo is the package root. ` +
           `That subpath is a leftover from the pre-split monorepo layout.`,
       );
+    }
+  }
+
+  // Publishable sub-packages (2026-09-24 pre-bounty audit, PBA-L6-004): the
+  // compat shim shipped to npm with no repository because only the root
+  // manifest was checked. Every non-private package under compat/ or packages/
+  // must name the canonical source and its own subpath as `directory`.
+  if (typeof expectedRepo === 'string' && expectedRepo.trim() !== '') {
+    for (const group of ['compat', 'packages']) {
+      const groupDir = join(root, group);
+      if (!existsSync(groupDir)) continue;
+      for (const entry of readdirSync(groupDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const manifest = join(groupDir, entry.name, 'package.json');
+        if (!existsSync(manifest)) continue;
+        const sub = JSON.parse(readFileSync(manifest, 'utf8'));
+        if (sub.private === true) continue;
+        const rel = `${group}/${entry.name}`;
+        const subUrl = sub.repository && sub.repository.url;
+        if (typeof subUrl !== 'string' || !subUrl.includes(`github.com/${expectedRepo}`)) {
+          errors.push(
+            `provenance-drift: ${rel}/package.json#repository.url must point at ` +
+              `github.com/${expectedRepo} (got ${JSON.stringify(subUrl ?? null)}).`,
+          );
+        }
+        if (!sub.repository || sub.repository.directory !== rel) {
+          errors.push(
+            `provenance-drift: ${rel}/package.json#repository.directory must be "${rel}".`,
+          );
+        }
+      }
     }
   }
 

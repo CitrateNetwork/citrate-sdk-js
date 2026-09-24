@@ -6,5 +6,5 @@
     "citrate-js"
   ],
   "sourceRepo": "CitrateNetwork/citrate-sdk-js",
-  "_sourceRepoComment": "2026-08-01: the PUBLISHED 0.2.0 carries repository.url github.com/citrate-ai/citrate -- an org that DOES NOT EXIST (gh api -> 404). Anyone who installed @citratelabs/sdk and clicked through to the source got a dead link, and the 'directory' field pointed into a monorepo layout retired at the federation split. Recorded here so the publish gate can reject provenance drift the same way it rejects registry drift: a package whose stated source cannot be reached is unauditable by the people we most want auditing it."
+  "_sourceRepoComment": "2026-08-01: the PUBLISHED 0.2.0 carries a repository.url on the `citrate-ai` GitHub owner -- an owner that DOES NOT EXIST (gh api -> 404). Anyone who installed @citratelabs/sdk and clicked through to the source got a dead link, and the 'directory' field pointed into a monorepo layout retired at the federation split. Recorded here so the publish gate can reject provenance drift the same way it rejects registry drift: a package whose stated source cannot be reached is unauditable by the people we most want auditing it."
 }
