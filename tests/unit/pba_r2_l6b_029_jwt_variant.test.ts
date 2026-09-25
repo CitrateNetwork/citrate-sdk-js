@@ -5,7 +5,7 @@
  * Both SDKs now apply the same rule: typ absent or JWT, numeric exp and iat.
  */
 import { generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
-import { verifyIdToken, type Jwk } from '../../src/identity/jwt';
+import { IdTokenError, verifyIdToken, type Jwk } from '../../src/identity/jwt';
 
 const ISS = 'https://auth.citrate.ai';
 const AUD = 'citrate-core';
@@ -22,7 +22,9 @@ const opts = { issuer: ISS, audience: AUD, jwks: JWKS };
 
 describe('PBA-L6b-029 variant: ID-token typ and iat', () => {
   it.each(['at+jwt', 'logout+jwt', 'JWS', '', 5])('rejects typ %p', (typ) => {
-    expect(() => verifyIdToken(tok(claims(), { alg: 'RS256', kid: 'k', typ }), opts)).toThrow(/typ/);
+    const run = () => verifyIdToken(tok(claims(), { alg: 'RS256', kid: 'k', typ }), opts);
+    expect(run).toThrow(IdTokenError);
+    expect(run).toThrow(/unexpected token typ/);
   });
   it.each([{ alg: 'RS256', kid: 'k' }, { alg: 'RS256', kid: 'k', typ: 'JWT' }, { alg: 'RS256', kid: 'k', typ: 'jwt' }])(
     'accepts header %p',
