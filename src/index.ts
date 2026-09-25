@@ -33,7 +33,7 @@ export * from './utils/validation';
 // export * from './react/hooks'; // Commented out to avoid requiring React as dependency
 
 // Version (kept in sync with package.json)
-export const VERSION = '0.2.0';
+export const VERSION = '0.2.2';
 // Embedded wallet (ERC-4337 v0.7 / Kernel v3) — EW-S1 WP-7
 export * as aa from './aa';
 

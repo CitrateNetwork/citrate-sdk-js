@@ -34,7 +34,7 @@
     "README.md"
   ],
   "dependencies": {
-    "@citratelabs/sdk": "0.2.1"
+    "@citratelabs/sdk": "0.2.2"
   },
   "publishConfig": {
     "access": "public",
