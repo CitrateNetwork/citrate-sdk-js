@@ -7,9 +7,13 @@ name: Release
 # bypass: `--ignore-scripts` disables the client-side `prepublishOnly` hook,
 # but it has no power over a CI job that is a hard `needs:` precondition.
 #
-# Triggered on a version tag push (or manual dispatch). The actual `npm
-# publish` step also passes `--provenance` and pins the registry via a
-# repo-local .npmrc so the published artifact records signed build provenance.
+# Publishing uses npm TRUSTED PUBLISHING (OIDC): no npm token is stored in
+# GitHub. Each package has a Trusted Publisher on npmjs.com bound to
+# CitrateNetwork/citrate-sdk-js + this file (release.yml). npm issues a
+# short-lived credential for this workflow run only and records signed
+# provenance for the tarball (2026-09-24 pre-bounty audit, PBA-L6-004).
+#
+# Triggered on a version tag push (or manual dispatch).
 
 on:
   push:
@@ -26,29 +30,39 @@ jobs:
   publish-names-gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          node-version: 20
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
       - name: Publish-name + registry drift gate (FWA-C12-01 / BV-SDK-01)
         run: node scripts/check-publish-names.mjs
 
   publish:
-    # The publish job is blocked until the gate job succeeds. If the gate fails
-    # (name drift, dropped publishConfig, or a repointed registry) this job is
-    # skipped and nothing is ever published.
+    # Blocked until the gate job succeeds. If the gate fails (name drift,
+    # dropped publishConfig, repointed registry, or provenance drift) this job
+    # is skipped and nothing is ever published.
     needs: publish-names-gate
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # required for npm provenance attestation (OIDC).
+      # OIDC: npm trusted publishing + provenance attestation.
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          node-version: 20
-          registry-url: 'https://registry.npmjs.org/'
+          persist-credentials: false
+      # No registry-url here: that makes setup-node write an _authToken
+      # placeholder into .npmrc. The repo .npmrc already pins the registry, and
+      # trusted publishing authenticates through OIDC, not a token.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: npm new enough for trusted publishing (>= 11.5.1)
+        run: |
+          npm install -g npm@11.6.2
+          npm --version
       # Belt-and-suspenders: re-run the gate in the publish job itself, again
       # independently of npm lifecycle hooks, so the precondition holds even if
       # the job graph is edited later.
@@ -58,16 +72,19 @@ jobs:
         run: npm ci
       - name: Build publish artifact
         run: npm run build:publish
-      # `--ignore-scripts` is intentionally NOT used; the gate above is the
-      # authoritative control regardless. `--provenance` records signed build
-      # provenance for the published tarball.
-      - name: Publish to npm (provenance)
-        run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      # Publish the deprecated compatibility shim (@citratelabs/citrate-js), which
-      # re-exports @citratelabs/sdk. Skips cleanly if its version is already on the
-      # registry, so it only goes out when compat/citrate-js/package.json bumps.
+      - name: Publish @citratelabs/sdk (trusted publishing + provenance)
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VER=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VER" version >/dev/null 2>&1; then
+            echo "$NAME@$VER already published; skipping."
+          else
+            npm publish --access public --provenance
+          fi
+      # The deprecated compatibility shim re-exports @citratelabs/sdk. Skips
+      # cleanly if its version is already on the registry, so it only goes out
+      # when compat/citrate-js/package.json bumps. --provenance is explicit:
+      # this subdirectory does not read the repo-root .npmrc.
       - name: Publish deprecated shim (@citratelabs/citrate-js)
         working-directory: compat/citrate-js
         run: |
@@ -76,7 +93,5 @@ jobs:
           if npm view "$NAME@$VER" version >/dev/null 2>&1; then
             echo "$NAME@$VER already published; skipping."
           else
-            npm publish --access public
+            npm publish --access public --provenance
           fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
