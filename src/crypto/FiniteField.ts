@@ -133,6 +133,9 @@ export class GF256 {
  */
 export class ShamirSecretSharing {
   constructor(private threshold: number, private totalShares: number) {
+    if (!Number.isInteger(threshold) || !Number.isInteger(totalShares)) {
+      throw new Error('Threshold and total shares must be integers');
+    }
     if (threshold <= 0) {
       throw new Error('Threshold must be positive');
     }
@@ -179,35 +182,57 @@ export class ShamirSecretSharing {
   }
 
   /**
+   * Validate a share set before any interpolation (PBA-L4-005).
+   *
+   * Every share, not only the first `threshold`, must have an integer x in
+   * 1..255 (x = 0 is the secret itself: a share there dictates the output),
+   * x values must be distinct (a duplicate zeroes a Lagrange denominator or
+   * silently double-counts a point), and every y must be non-empty and the same
+   * length. Throws on the first violation.
+   */
+  static validateShares(shares: Array<{ x: number; y: Uint8Array }>): void {
+    if (!Array.isArray(shares) || shares.length === 0) {
+      throw new Error('No shares provided');
+    }
+    const seen = new Set<number>();
+    const len = shares[0]?.y?.length;
+    for (const share of shares) {
+      const x = share?.x;
+      if (!Number.isInteger(x) || (x as number) < 1 || (x as number) > 255) {
+        throw new Error(`Invalid share: x must be an integer in 1..255, got ${String(x)}`);
+      }
+      if (seen.has(x)) {
+        throw new Error(`Invalid share set: duplicate share x = ${x}`);
+      }
+      seen.add(x);
+      if (!(share.y instanceof Uint8Array) || share.y.length !== len) {
+        throw new Error('Invalid share set: all shares must have the same length');
+      }
+    }
+    if (!len) {
+      throw new Error('Invalid share set: share y is empty');
+    }
+  }
+
+  /**
    * Reconstruct secret from shares
    */
   reconstructSecret(shares: Array<{ x: number; y: Uint8Array }>): Uint8Array {
+    ShamirSecretSharing.validateShares(shares);
     if (shares.length < this.threshold) {
       throw new Error(`Need at least ${this.threshold} shares, got ${shares.length}`);
     }
 
     // Use first threshold shares
     const activeShares = shares.slice(0, this.threshold);
-
-    // Ensure all shares have same length
-    const firstShare = activeShares[0];
-    if (!firstShare) {
-      throw new Error('No shares provided');
-    }
-    const shareLength = firstShare.y.length;
-    if (!activeShares.every(share => share.y.length === shareLength)) {
-      throw new Error('All shares must have the same length');
-    }
+    const shareLength = activeShares[0]!.y.length;
 
     // Reconstruct each byte position
     const secretBytes: number[] = [];
     for (let bytePos = 0; bytePos < shareLength; bytePos++) {
-      // Extract byte values for this position
-      const points = activeShares.map(share => ({ x: share.x, y: share.y[bytePos] ?? 0 }));
-
+      const points = activeShares.map(share => ({ x: share.x, y: share.y[bytePos]! }));
       // Use Lagrange interpolation to find f(0)
-      const reconstructedByte = this.lagrangeInterpolation(points, 0);
-      secretBytes.push(reconstructedByte);
+      secretBytes.push(this.lagrangeInterpolation(points, 0));
     }
 
     return new Uint8Array(secretBytes);
@@ -233,60 +258,58 @@ export class ShamirSecretSharing {
    * Lagrange interpolation to find f(x) given points
    */
   private lagrangeInterpolation(points: Array<{ x: number; y: number }>, x: number): number {
+    // Callers validate first (validateShares): x values are distinct integers
+    // in 1..255, so every denominator below is nonzero. GF256.divide still
+    // throws on a zero divisor as a backstop.
     let result = 0;
-
     for (let i = 0; i < points.length; i++) {
-      const point = points[i];
-      if (!point) continue;
-      const { x: xi, y: yi } = point;
-
-      // Calculate Lagrange basis polynomial L_i(x)
+      const { x: xi, y: yi } = points[i]!;
+      // Lagrange basis L_i(x) = prod_{j != i} (x - x_j) / (x_i - x_j)
       let numerator = 1;
       let denominator = 1;
-
       for (let j = 0; j < points.length; j++) {
-        if (i !== j) {
-          const otherPoint = points[j];
-          if (!otherPoint) continue;
-          const xj = otherPoint.x;
-          // For x=0, numerator becomes (0 - x_j) = -x_j = x_j (in GF(2^8))
-          numerator = GF256.multiply(numerator, xj);
-          denominator = GF256.multiply(denominator, GF256.subtract(xi, xj));
-        }
+        if (i === j) continue;
+        const xj = points[j]!.x;
+        // (x - x_j) = x XOR x_j in GF(2^8); at x = 0 this is x_j.
+        numerator = GF256.multiply(numerator, GF256.subtract(x, xj));
+        denominator = GF256.multiply(denominator, GF256.subtract(xi, xj));
       }
-
-      // L_i(x) = numerator / denominator
-      if (denominator === 0) {
-        throw new Error('Denominator is zero in Lagrange interpolation');
-      }
-
-      const lagrangeCoeff = GF256.divide(numerator, denominator);
-
-      // Add y_i * L_i(x) to result
-      result = GF256.add(result, GF256.multiply(yi, lagrangeCoeff));
+      result = GF256.add(result, GF256.multiply(yi, GF256.divide(numerator, denominator)));
     }
-
     return result;
   }
 
   /**
-   * Verify that shares are consistent
+   * Check that a share set is structurally valid and CONSISTENT: every share
+   * beyond the first `threshold` must lie on the polynomial those first
+   * `threshold` shares define (PBA-L4-005; the old version only checked that
+   * interpolation did not throw, so it returned true for tampered shares).
+   *
+   * With exactly `threshold` shares there is no redundancy, so any structurally
+   * valid set is consistent by definition; this cannot detect a forged share in
+   * that case. Use verifiable secret sharing (e.g. Feldman commitments) when
+   * that matters.
    */
   verifyShares(shares: Array<{ x: number; y: Uint8Array }>): boolean {
-    if (shares.length < this.threshold) {
-      return false;
-    }
-
     try {
-      // Try to reconstruct with different combinations
-      for (let i = 0; i <= shares.length - this.threshold; i++) {
-        const testShares = shares.slice(i, i + this.threshold);
-        this.reconstructSecret(testShares);
-      }
-      return true;
+      ShamirSecretSharing.validateShares(shares);
     } catch {
       return false;
     }
+    if (shares.length < this.threshold) {
+      return false;
+    }
+    const base = shares.slice(0, this.threshold);
+    const len = base[0]!.y.length;
+    for (const extra of shares.slice(this.threshold)) {
+      for (let b = 0; b < len; b++) {
+        const points = base.map(s => ({ x: s.x, y: s.y[b]! }));
+        if (this.lagrangeInterpolation(points, extra.x) !== extra.y[b]) {
+          return false;
+        }
+      }
+    }
+    return true;
   }
 }
 

@@ -35,6 +35,22 @@ jobs:
       - name: Publish-name + registry drift gate (FWA-C12-01 / BV-SDK-01)
         run: node scripts/check-publish-names.mjs
 
+  # PBA-L4-001 tripwire on the BUILT artifact: pack the package the way
+  # `npm publish` would, load its dist/, and assert that no subset of the
+  # deployModel calldata reconstructs the model key. The source-level twin is
+  # tests/unit/pba_r2_l4_keyshares.test.ts.
+  keyshare-pack-tripwire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run build:publish
+      - name: Key-share leak tripwire (packed artifact)
+        run: node scripts/check-keyshare-pack.mjs
+
   # CL-C2 / SW-089: fail the build if the vendored federation-contract artifact
   # drifts from the canonical federation intermediate. Federation's own
   # contract-artifact-drift gate keeps that intermediate fresh vs citrate-chain,

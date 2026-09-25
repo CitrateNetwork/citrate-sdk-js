@@ -39,8 +39,32 @@ export interface EncryptionConfig {
   algorithm: string;
   keyDerivation: string;
   accessControl: boolean;
+  /** Shamir threshold for splitting the model key. 0 disables key sharing. */
   thresholdShares: number;
   totalShares: number;
+  /**
+   * Required when `thresholdShares > 0` (PBA-L4-001): one distinct secp256k1
+   * public key per share. Each share is ECDH-wrapped (V2 envelope) to its
+   * holder and returned to the caller as `keyShareEnvelopes` for off-chain
+   * delivery. Shares are never written to deploy metadata or calldata.
+   */
+  shareHolderPublicKeys?: string[];
+}
+
+/**
+ * One Shamir share of a model key, wrapped to a single holder (PBA-L4-001).
+ * Deliver it to that holder off-chain; it is never part of deploy calldata.
+ * The holder opens it with `KeyManager.unwrapKeyShare`.
+ */
+export interface KeyShareEnvelope {
+  /** Share index (the Shamir x coordinate, 1..255). Not secret. */
+  x: number;
+  /** Threshold the owner chose. Not secret. */
+  threshold: number;
+  /** Holder public key the share is wrapped to (uncompressed hex, no 0x). */
+  holderPublicKey: string;
+  /** ECDH V2 envelope (`KeyManager.encryptData` format) holding the share y. */
+  envelope: string;
 }
 
 export interface ModelDeployment {
@@ -52,6 +76,11 @@ export interface ModelDeployment {
   deploymentTime: number;
   gasUsed?: bigint;
   deploymentCost?: bigint;
+  /**
+   * Holder-wrapped key shares when threshold sharing was requested. Deliver
+   * each to its holder off-chain; none of this is on-chain (PBA-L4-001).
+   */
+  keyShareEnvelopes?: KeyShareEnvelope[];
 }
 
 export interface ModelInfo {
