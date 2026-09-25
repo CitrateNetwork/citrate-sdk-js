@@ -109,7 +109,7 @@ describe('encryptModel share-plan validation', () => {
     );
   });
   it('boundaries accepted: 1-of-1, 3-of-3', async () => {
-    const r1 = await km.encryptModel(MODEL, enc({ thresholdShares: 1, totalShares: 1, shareHolderPublicKeys: pubs(1) }));
+    const r1 = await km.encryptModel(MODEL, enc({ thresholdShares: 1, totalShares: 1, shareHolderPublicKeys: pubs(1), allowSingleHolderRecovery: true }));
     expect(r1.keyShareEnvelopes).toHaveLength(1);
     const r3 = await km.encryptModel(MODEL, enc({ thresholdShares: 3, totalShares: 3, shareHolderPublicKeys: pubs(3) }));
     expect(r3.metadata.keySharing).toEqual({ threshold: 3, totalShares: 3 });

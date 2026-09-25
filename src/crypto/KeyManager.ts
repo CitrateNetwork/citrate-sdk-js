@@ -194,12 +194,20 @@ export class KeyManager {
     config?: EncryptionConfig
   ): { threshold: number; total: number; holders: string[] } | null {
     const threshold = config?.thresholdShares ?? 0;
-    if (!threshold) return null;
+    // Only an exact 0 means "no sharing". NaN used to fall through `!threshold`
+    // and silently disable sharing; it is now a parameter error like 1.5.
+    if (threshold === 0) return null;
     const total = config?.totalShares ?? 0;
     if (!Number.isInteger(threshold) || !Number.isInteger(total) || threshold < 1 || threshold > total || total > 255) {
       throw new CitrateError(
         `encryptModel: invalid share parameters (thresholdShares=${threshold}, totalShares=${total}); ` +
           'need integers with 1 <= thresholdShares <= totalShares <= 255.'
+      );
+    }
+    if (threshold === 1 && config?.allowSingleHolderRecovery !== true) {
+      throw new CitrateError(
+        'encryptModel: thresholdShares=1 lets ANY single holder recover the model key, which is ' +
+          'not threshold sharing. Pass allowSingleHolderRecovery: true if that is really intended.'
       );
     }
     const holders = config?.shareHolderPublicKeys;
