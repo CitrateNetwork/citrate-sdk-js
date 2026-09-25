@@ -13,6 +13,8 @@
  *     Node < 16, neither of which the SDK supports.
  */
 
+import { CitrateError } from '../errors/CitrateError';
+
 /// RM-G.7 — default PBKDF2-HMAC-SHA256 iteration count. The previous default
 /// (10,000) was far below current guidance; OWASP recommends >= 600,000 for
 /// PBKDF2-SHA256. Callers that need a different work factor pass it explicitly.
@@ -271,8 +273,18 @@ function bytesToHex(bytes: Uint8Array): string {
   return s;
 }
 
+/**
+ * Strict hex decoder: optional 0x/0X, then an even number of hex digits and
+ * nothing else. Whitespace, trailing characters and odd lengths throw instead
+ * of being silently truncated. This is the parser reconstructKeyFromShares
+ * uses; the deploy guard's y match is a superset of it.
+ */
 function hexToBytes(hex: string): Uint8Array {
-  const clean = hex.replace(/^0x/, '');
+  const m = typeof hex === 'string' ? /^(?:0[xX])?((?:[0-9a-fA-F]{2})*)$/.exec(hex) : null;
+  if (!m) {
+    throw new CitrateError('hexToBytes: expected an even-length hex string');
+  }
+  const clean = m[1]!;
   const out = new Uint8Array(clean.length / 2);
   for (let i = 0; i < out.length; i++) {
     out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);

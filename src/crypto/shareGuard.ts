@@ -11,12 +11,33 @@ export const SHARE_FIELD_DENYLIST: readonly string[] = ['keyShares', 'key_shares
 /** Deeper payloads are refused rather than partially scanned. */
 const MAX_DEPTH = 32;
 
-const HEX = /^(0x)?[0-9a-fA-F]+$/;
+/** A share's y is at least 16 bytes (the SDK shares 32-byte keys). */
+const MIN_SHARE_BYTES = 16;
+/**
+ * Deliberately LENIENT y match, a superset of the strict parser
+ * (CryptoManager.hexToBytes) and of lenient decoders elsewhere: after removing
+ * whitespace, any run of >= 16 bytes of hex digits counts.
+ */
+const SHARE_Y_HEX_RUN = new RegExp(`[0-9a-fA-F]{${2 * MIN_SHARE_BYTES},}`);
+function shareYLike(y: string): boolean {
+  return SHARE_Y_HEX_RUN.test(y.replace(/\s+/g, ''));
+}
 
-/** A raw Shamir share ({x, y} with y hex/bytes) or a holder-wrapped share record. */
+function isShareX(x: unknown): boolean {
+  if (typeof x === 'number') return Number.isInteger(x) && x >= 1 && x <= 255;
+  return typeof x === 'string' && /^[0-9]{1,3}$/.test(x) && Number(x) >= 1 && Number(x) <= 255;
+}
+
+/**
+ * A raw Shamir share ({x in 1..255, y of share length as hex or bytes}) or a
+ * holder-wrapped share record. Short or coordinate-like values are not shares.
+ */
 function looksLikeShare(o: Record<string, unknown>): boolean {
   const y = o['y'];
-  if ('x' in o && (y instanceof Uint8Array || (typeof y === 'string' && HEX.test(y)))) return true;
+  if ('x' in o && isShareX(o['x'])) {
+    if (y instanceof Uint8Array && y.length >= MIN_SHARE_BYTES) return true;
+    if (typeof y === 'string' && shareYLike(y)) return true;
+  }
   return 'envelope' in o && ('holderPublicKey' in o || 'holder_public_key' in o);
 }
 
@@ -26,6 +47,21 @@ function looksLikeShare(o: Record<string, unknown>): boolean {
  * strings, so a renamed field (e.g. `myShares`) is caught too.
  */
 export function assertNoKeyShareMaterial(value: unknown, depth = 0): void {
+  if (depth === 0 && value !== null && typeof value === 'object') {
+    // Check what is actually sent: JSON.stringify honours toJSON(), which a
+    // plain object walk does not see.
+    let wire: unknown;
+    try {
+      wire = JSON.parse(JSON.stringify(value));
+    } catch {
+      wire = undefined;
+    }
+    if (wire !== undefined) scan(wire, depth);
+  }
+  scan(value, depth);
+}
+
+function scan(value: unknown, depth: number): void {
   if (typeof value === 'string') {
     // Any string that parses as JSON is checked too: a share can be smuggled
     // as a JSON-encoded blob inside an ordinary-looking field.
@@ -35,7 +71,7 @@ export function assertNoKeyShareMaterial(value: unknown, depth = 0): void {
     } catch {
       return;
     }
-    assertNoKeyShareMaterial(decoded, depth + 1);
+    scan(decoded, depth + 1);
     return;
   }
   if (value === null || typeof value !== 'object' || value instanceof Uint8Array) return;
@@ -59,6 +95,6 @@ export function assertNoKeyShareMaterial(value: unknown, depth = 0): void {
           'Deliver key shares to their holders off-chain (PBA-L4-001).'
       );
     }
-    assertNoKeyShareMaterial(v, depth + 1);
+    scan(v, depth + 1);
   }
 }
