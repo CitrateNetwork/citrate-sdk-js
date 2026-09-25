@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   js:
-    uses: CitrateNetwork/.github/.github/workflows/reusable-js-ci.yml@main
+    uses: CitrateNetwork/.github/.github/workflows/reusable-js-ci.yml@db5f1a6ddaec28275708265b56762eb1dfc3571b # main
 
   # FWA-C12-01 + FWA-BV-SDK-01 supply-chain tripwire: publish-name drift +
   # publishConfig (access + registry) gate. Fails the build if:
@@ -28,8 +28,8 @@ jobs:
   publish-names:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
       - name: Publish-name + registry drift gate (FWA-C12-01 / BV-SDK-01)
@@ -56,12 +56,12 @@ jobs:
         run: echo "contract-drift is an internal supply-chain gate; skipped without CITRATE_FEDERATION_READ_TOKEN."
       - name: Checkout this repo
         if: env.FED_TOKEN != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: citrate-sdk-js
       - name: Checkout canonical citrate-federation intermediate (sparse)
         if: env.FED_TOKEN != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: CitrateNetwork/citrate-federation
           ref: main
@@ -69,7 +69,7 @@ jobs:
           path: citrate-federation
           sparse-checkout: |
             contract
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         if: env.FED_TOKEN != ''
         with:
           node-version: 20
