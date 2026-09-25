@@ -107,10 +107,10 @@ export function verifyIdToken(token: string, opts: VerifyIdTokenOptions): IdToke
   // PBA-L3a-011: `exp` is REQUIRED (OIDC Core 2, "REQUIRED"). The old check
   // ran only when `exp` happened to be a number, so a token with no `exp`, or a
   // string one, never expired.
-  if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) {
+  if (!Number.isFinite(payload.exp)) {
     throw new IdTokenError('token has no numeric exp claim');
   }
-  if (typeof payload.iat !== 'number' || !Number.isFinite(payload.iat)) {
+  if (!Number.isFinite(payload.iat)) {
     throw new IdTokenError('token has no numeric iat claim');
   }
   if (nowSec > payload.exp + tol) throw new IdTokenError('token expired');
