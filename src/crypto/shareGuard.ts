@@ -11,12 +11,25 @@ export const SHARE_FIELD_DENYLIST: readonly string[] = ['keyShares', 'key_shares
 /** Deeper payloads are refused rather than partially scanned. */
 const MAX_DEPTH = 32;
 
-const HEX = /^(0x)?[0-9a-fA-F]+$/;
+/** A share's y is at least 16 bytes (the SDK shares 32-byte keys). */
+const MIN_SHARE_BYTES = 16;
+const SHARE_Y_HEX = /^(0x)?(?:[0-9a-fA-F]{2}){16,}$/;
 
-/** A raw Shamir share ({x, y} with y hex/bytes) or a holder-wrapped share record. */
+function isShareX(x: unknown): boolean {
+  if (typeof x === 'number') return Number.isInteger(x) && x >= 1 && x <= 255;
+  return typeof x === 'string' && /^[0-9]{1,3}$/.test(x) && Number(x) >= 1 && Number(x) <= 255;
+}
+
+/**
+ * A raw Shamir share ({x in 1..255, y of share length as hex or bytes}) or a
+ * holder-wrapped share record. Short or coordinate-like values are not shares.
+ */
 function looksLikeShare(o: Record<string, unknown>): boolean {
   const y = o['y'];
-  if ('x' in o && (y instanceof Uint8Array || (typeof y === 'string' && HEX.test(y)))) return true;
+  if ('x' in o && isShareX(o['x'])) {
+    if (y instanceof Uint8Array && y.length >= MIN_SHARE_BYTES) return true;
+    if (typeof y === 'string' && SHARE_Y_HEX.test(y)) return true;
+  }
   return 'envelope' in o && ('holderPublicKey' in o || 'holder_public_key' in o);
 }
 

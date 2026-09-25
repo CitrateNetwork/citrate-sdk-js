@@ -50,6 +50,11 @@ release may carry breaking changes when a security fix requires them.
     bound to both keys through HKDF info. It does not use a per-share
     ephemeral key.
 
+- **Round 3 (still 0.2.3, unreleased):** the share guard matches only
+  share-shaped values (x in 1..255 and a y of at least 16 bytes), so
+  coordinate-like caller metadata such as `{x: 1, y: "10"}` is no longer
+  refused.
+
 ### Changed (breaking)
 
 - `IdentityClient.refresh(refreshToken, expectedSub)`: `expectedSub` is

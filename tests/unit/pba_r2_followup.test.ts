@@ -79,15 +79,15 @@ describe('structural share guard', () => {
   }));
   it.each([
     [{ myShares: shares }],
-    [{ a: [{ x: 1, y: 'ab12' }] }],
-    [{ a: { x: '1', y: '0xab' } }],
+    [{ a: [{ x: 1, y: 'ab12'.repeat(16) }] }],
+    [{ a: { x: '1', y: '0x' + 'ab'.repeat(32) } }],
     [{ blob: JSON.stringify({ parts: shares }) }],
-    [{ blob: JSON.stringify([{ x: 2, y: 'cd' }]) }],
+    [{ blob: JSON.stringify([{ x: 2, y: 'cd'.repeat(32) }]) }],
     [{ w: { holderPublicKey: '02' + '11'.repeat(32), envelope: '{}' } }],
     [{ w: [{ holder_public_key: '02' + '11'.repeat(32), envelope: '{}' }] }],
-    [{ y: { x: 1, y: new Uint8Array([1]) } }],
-    [{ padded: '  {"x": 1, "y": "ab"}  ' }],
-    [{ big: JSON.stringify({ pad: 'a'.repeat(1_100_000), s: { x: 1, y: 'ab' } }) }],
+    [{ y: { x: 1, y: new Uint8Array(32).fill(1) } }],
+    [{ padded: '  {"x": 1, "y": "' + 'ab'.repeat(32) + '"}  ' }],
+    [{ big: JSON.stringify({ pad: 'a'.repeat(1_100_000), s: { x: 1, y: 'ab'.repeat(32) } }) }],
   ])('refuses share-shaped case %#', (meta) => {
     expect(() => assertNoKeyShareMaterial(meta)).toThrow(
       /refusing to publish a value shaped like a key share \(\{x, y\} or a wrapped share record\) in public deploy calldata\. Deliver key shares to their holders off-chain/,
