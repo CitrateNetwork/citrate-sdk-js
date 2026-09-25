@@ -35,7 +35,7 @@ export interface IdTokenClaims {
   sub: string;
   aud: string | string[];
   exp: number;
-  iat?: number;
+  iat: number;
   nbf?: number;
   nonce?: string;
   [k: string]: unknown;
@@ -73,6 +73,13 @@ export function verifyIdToken(token: string, opts: VerifyIdTokenOptions): IdToke
     throw new IdTokenError(`unsupported or unsafe alg: ${String(header['alg'])} (only RS256 accepted)`);
   }
   if (sigSeg.length === 0) throw new IdTokenError('empty signature');
+  // PBA-L6b-029 (variant, parity with the Python SDK): an access token
+  // (`at+jwt`, RFC 9068) or logout token signed by the same key for the same
+  // audience must not pass as an ID token. ID tokens carry no typ or `JWT`.
+  const typ = header['typ'];
+  if (typ !== undefined && (typeof typ !== 'string' || typ.toUpperCase() !== 'JWT')) {
+    throw new IdTokenError(`unexpected token typ: ${JSON.stringify(typ)} (an ID token has typ JWT or none)`);
+  }
 
   const kid = typeof header['kid'] === 'string' ? (header['kid'] as string) : undefined;
   const rsaKeys = opts.jwks.filter((k) => k.kty === 'RSA' && k.n && k.e);
@@ -102,6 +109,9 @@ export function verifyIdToken(token: string, opts: VerifyIdTokenOptions): IdToke
   // string one, never expired.
   if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) {
     throw new IdTokenError('token has no numeric exp claim');
+  }
+  if (typeof payload.iat !== 'number' || !Number.isFinite(payload.iat)) {
+    throw new IdTokenError('token has no numeric iat claim');
   }
   if (nowSec > payload.exp + tol) throw new IdTokenError('token expired');
   if (typeof payload.nbf === 'number' && nowSec + tol < payload.nbf) throw new IdTokenError('token not yet valid');
