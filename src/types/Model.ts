@@ -49,6 +49,11 @@ export interface EncryptionConfig {
    * delivery. Shares are never written to deploy metadata or calldata.
    */
   shareHolderPublicKeys?: string[];
+  /**
+   * `thresholdShares: 1` means any single holder recovers the key. It is
+   * refused unless this is `true`.
+   */
+  allowSingleHolderRecovery?: boolean;
 }
 
 /**

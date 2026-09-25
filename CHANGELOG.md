@@ -37,6 +37,19 @@ release may carry breaking changes when a security fix requires them.
 - **PBA-L6b-027 (variant):** `verifyWalletAddressOnChain` asserts the provider's
   chain id and that the factory has code before trusting it.
 
+- **Verifier follow-ups (still 0.2.3, unreleased):**
+  - `thresholdShares: NaN` (or any non-integer) raises instead of silently
+    disabling sharing.
+  - `thresholdShares: 1` requires `allowSingleHolderRecovery: true`.
+  - The deploy guard also refuses values shaped like shares (`{x, y}` or a
+    wrapped share record), including inside JSON strings.
+  - `verifyIdToken` refuses an `iat` more than the clock tolerance in the
+    future.
+  - The holder dedupe is pinned by a compressed/uncompressed test.
+  - Note: the share envelope is the existing static-static ECDH V2 scheme,
+    bound to both keys through HKDF info. It does not use a per-share
+    ephemeral key.
+
 ### Changed (breaking)
 
 - `IdentityClient.refresh(refreshToken, expectedSub)`: `expectedSub` is

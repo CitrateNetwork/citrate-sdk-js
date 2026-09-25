@@ -113,6 +113,8 @@ export function verifyIdToken(token: string, opts: VerifyIdTokenOptions): IdToke
   if (!Number.isFinite(payload.iat)) {
     throw new IdTokenError('token has no numeric iat claim');
   }
+  // A token minted in the future (beyond the clock tolerance) is refused.
+  if (payload.iat > nowSec + tol) throw new IdTokenError('token issued in the future (iat)');
   if (nowSec > payload.exp + tol) throw new IdTokenError('token expired');
   if (typeof payload.nbf === 'number' && nowSec + tol < payload.nbf) throw new IdTokenError('token not yet valid');
   if (opts.nonce !== undefined && payload.nonce !== opts.nonce) throw new IdTokenError('nonce mismatch');
