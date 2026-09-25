@@ -13,6 +13,7 @@ import { resolveCapabilities, normalizeTier, type CapabilitySet, type Tier } fro
 import { createPkce, type Pkce } from './pkce';
 import { verifyIdToken, type IdTokenClaims, type Jwk } from './jwt';
 import { enforceTransportSecurity } from '../utils/transport';
+import { getAddress } from 'ethers';
 
 export class IdentityError extends Error {
   constructor(message: string, readonly status?: number) {
@@ -71,6 +72,70 @@ export interface UserInfo {
   /** Capability set derived from the tier + role (ADR-0002). */
   capabilities: CapabilitySet;
   raw: Record<string, unknown>;
+}
+
+/** Result of `siweVerify` (PBA-L3a-012). */
+export type SiweVerifyResult =
+  | { kind: 'redirect'; address: string; method: string; redirectTo: string }
+  | { kind: 'token'; address: string; method: string; idToken: string; claims: IdTokenClaims };
+
+/** citrate-identity rejects an Expiration Time more than 24 h out (MAX_SIWE_EXPIRATION_MS). */
+const SIWE_MAX_TTL_SECONDS = 24 * 60 * 60;
+
+/**
+ * Build the EIP-4361 message the authority verifies (PBA-L3a-012). It enforces
+ * what citrate-identity `verifySiweLogin` enforces: chain 40204, a mandatory
+ * Expiration Time no more than 24 h out, and a `URI` whose host is the
+ * authority's domain. Defaults come from the federation contract artifact.
+ */
+export function buildSiweMessage(opts: {
+  address: string;
+  nonce: string;
+  statement?: string;
+  /** Defaults to the authority origin. Its host must be the authority domain. */
+  uri?: string;
+  chainId?: number;
+  /** Lifetime of the signed message; default 600 s, max 24 h. */
+  ttlSeconds?: number;
+  issuedAt?: Date;
+}): string {
+  const authority = new URL(ID.issuer);
+  const domain = authority.host;
+  const uri = opts.uri ?? authority.origin;
+  if (new URL(uri).host !== domain) {
+    throw new IdentityError(`buildSiweMessage: uri host must be the authority domain ${domain}`);
+  }
+  let address: string;
+  try {
+    // EIP-4361 requires the EIP-55 checksummed form; the server's parser rejects others.
+    address = getAddress(opts.address);
+  } catch {
+    throw new IdentityError('buildSiweMessage: address must be a valid 20-byte hex address');
+  }
+  if (!/^[A-Za-z0-9]{8,}$/.test(opts.nonce)) {
+    throw new IdentityError('buildSiweMessage: nonce must be the alphanumeric value from siweChallenge');
+  }
+  const ttl = opts.ttlSeconds ?? 600;
+  if (!Number.isInteger(ttl) || ttl <= 0 || ttl > SIWE_MAX_TTL_SECONDS) {
+    throw new IdentityError('buildSiweMessage: ttlSeconds must be an integer in 1..86400 (the authority caps expiry at 24 h)');
+  }
+  const issuedAt = opts.issuedAt ?? new Date();
+  const expiration = new Date(issuedAt.getTime() + ttl * 1000);
+  const lines = [
+    `${domain} wants you to sign in with your Ethereum account:`,
+    address,
+    '',
+    // EIP-4361 ABNF: address LF LF [statement LF] LF "URI: ..."
+    ...(opts.statement ? [opts.statement] : []),
+    '',
+    `URI: ${uri}`,
+    'Version: 1',
+    `Chain ID: ${opts.chainId ?? FEDERATION_CONTRACT.chain.chainId}`,
+    `Nonce: ${opts.nonce}`,
+    `Issued At: ${issuedAt.toISOString()}`,
+    `Expiration Time: ${expiration.toISOString()}`,
+  ];
+  return lines.join('\n');
 }
 
 /** A factory deploy permit signed by the authority's identity-signer. */
@@ -167,8 +232,21 @@ export class IdentityClient {
     return this.finishTokens(tok, opts.nonce);
   }
 
-  /** Refresh with a rotating refresh token. */
-  async refresh(refreshToken: string): Promise<TokenSet> {
+  /**
+   * Refresh with a rotating refresh token.
+   *
+   * PBA-L3a-011: `expectedSub` is REQUIRED — the `sub` of the session being
+   * refreshed (e.g. `tokens.claims.sub`). OIDC Core 12.2 requires the refreshed
+   * ID token to carry the same `sub`; a different one means the refresh token
+   * was swapped or the authority is confused, and the old code adopted the new
+   * identity silently.
+   */
+  async refresh(refreshToken: string, expectedSub: string): Promise<TokenSet> {
+    if (typeof expectedSub !== 'string' || expectedSub.length === 0) {
+      throw new IdentityError(
+        'refresh requires expectedSub: the sub of the session being refreshed (PBA-L3a-011).',
+      );
+    }
     const disc = await this.discover();
     const body = new URLSearchParams({
       grant_type: 'refresh_token',
@@ -180,7 +258,13 @@ export class IdentityClient {
       access_token: string;
       refresh_token?: string;
     };
-    return this.finishTokens(tok);
+    const tokens = await this.finishTokens(tok);
+    if (tokens.claims.sub !== expectedSub) {
+      throw new IdentityError(
+        `refresh: ID token sub changed (${tokens.claims.sub} != ${expectedSub}); refusing the refreshed session (PBA-L3a-011).`,
+      );
+    }
+    return tokens;
   }
 
   private async finishTokens(
@@ -202,19 +286,57 @@ export class IdentityClient {
     };
   }
 
-  /** POST /siwe/challenge — EIP-4361 message + single-use nonce. */
-  async siweChallenge(address: string): Promise<{ message: string; nonce: string }> {
-    return (await this.postJson(`${ID.issuer}/siwe/challenge`, { address })) as { message: string; nonce: string };
+  /**
+   * GET /siwe/challenge — a fresh, single-use nonce.
+   *
+   * PBA-L3a-012: the authority serves this route on GET only and returns just
+   * `{ nonce }`; the message is built client-side (`buildSiweMessage`) and
+   * signed by the wallet. The old client POSTed `{ address }` and got a 404.
+   */
+  async siweChallenge(): Promise<{ nonce: string }> {
+    const body = (await this.getJson(`${ID.issuer}/siwe/challenge`)) as { nonce?: unknown };
+    if (typeof body.nonce !== 'string' || body.nonce.length < 8) {
+      throw new IdentityError('siweChallenge: authority returned no nonce');
+    }
+    return { nonce: body.nonce };
   }
 
-  /** POST /siwe/verify — returns an ID token on success. */
-  async siweVerify(opts: { message: string; signature: string }): Promise<TokenSet> {
-    const tok = (await this.postJson(`${ID.issuer}/siwe/verify`, opts)) as {
-      id_token: string;
-      access_token: string;
-      refresh_token?: string;
-    };
-    return this.finishTokens(tok);
+  /**
+   * POST /siwe/verify with `{ message, signature }` (PBA-L3a-012).
+   *
+   * The authority answers in one of two shapes (citrate-identity siwe-routes.ts):
+   *  - an OIDC interaction was in flight (browser, cookie present): the login is
+   *    recorded and the caller must navigate to `redirectTo` to finish the
+   *    authorization-code flow → `{ kind: 'redirect', ... }`;
+   *  - headless direct grant (only when the authority enables it): an RS256 ID
+   *    token and nothing else (no access or refresh token) →
+   *    `{ kind: 'token', ... }`, verified against the JWKS before it is returned.
+   * Any other outcome throws `IdentityError` carrying the authority's reason.
+   */
+  async siweVerify(opts: { message: string; signature: string }): Promise<SiweVerifyResult> {
+    const url = `${ID.issuer}/siwe/verify`;
+    enforceTransportSecurity(url, { allowInsecureHttp: this.config.allowInsecureHttp ?? false });
+    const res = await this.fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: opts.message, signature: opts.signature }),
+    });
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      const reason = typeof body['reason'] === 'string' ? body['reason'] : String(body['error'] ?? '');
+      throw new IdentityError(`POST ${url} failed: ${res.status}${reason ? ` (${reason})` : ''}`, res.status);
+    }
+    const address = typeof body['address'] === 'string' ? body['address'] : '';
+    const method = typeof body['method'] === 'string' ? body['method'] : '';
+    if (typeof body['redirectTo'] === 'string') {
+      return { kind: 'redirect', address, method, redirectTo: body['redirectTo'] };
+    }
+    if (typeof body['id_token'] === 'string') {
+      const jwks = await this.getJwks();
+      const claims = verifyIdToken(body['id_token'], { issuer: ID.issuer, audience: this.config.clientId, jwks });
+      return { kind: 'token', address, method, idToken: body['id_token'], claims };
+    }
+    throw new IdentityError('siweVerify: authority response has neither redirectTo nor id_token');
   }
 
   /** GET /userinfo — fresh claims + normalized entitlement capabilities. */

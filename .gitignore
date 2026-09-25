@@ -44,3 +44,4 @@ handoffs/
 **/*EXEC_STATUS*
 **/*COUNSEL*
 **/*DEPLOY_LOG*
+.pack-check-*/

@@ -18,7 +18,7 @@
 import { Contract, concat, getAddress, keccak256, toUtf8Bytes, type Provider } from 'ethers';
 
 import { AA_ADDRESSES } from '../utils/constants';
-import type { Hex } from '../generated/contract';
+import { FEDERATION_CONTRACT, type Hex } from '../generated/contract';
 
 /** Solady minimal ERC-1967 clone initcode segments (implementation embedded at bytes 9..29). */
 const INITCODE_PREFIX = '0x603d3d8160223d3973';
@@ -76,6 +76,11 @@ export interface PredictOptions {
   implementation?: string;
 }
 
+export interface VerifyOnChainOptions extends PredictOptions {
+  /** Chain the provider must report (defaults to the federation artifact chain, 40204). */
+  chainId?: number;
+}
+
 /**
  * Predict the counterfactual smart-wallet address for a userId. Pure + offline.
  * `address = keccak256(0xff || factory || keccak256(userId) || keccak256(initCode))[12..32]`.
@@ -103,10 +108,24 @@ const FACTORY_ABI = ['function predictAddress(bytes32 userId) view returns (addr
 export async function verifyWalletAddressOnChain(
   userId: string,
   provider: Provider,
-  opts: PredictOptions = {},
+  opts: VerifyOnChainOptions = {},
 ): Promise<Hex> {
   const local = predictWalletAddress(userId, opts);
-  const factory = new Contract(getAddress(opts.factory ?? AA_ADDRESSES.CitrateWalletFactory), FACTORY_ABI, provider);
+  const factoryAddress = getAddress(opts.factory ?? AA_ADDRESSES.CitrateWalletFactory);
+  // PBA-L6b-027 (variant of the Python finding): the provider is only as good
+  // as the chain it is on. Assert the chain id and that the factory has code
+  // before trusting its answer, so a wrong-chain or hostile RPC cannot make
+  // "verified" pass by echoing the publicly computable prediction.
+  const expectedChain = BigInt(opts.chainId ?? FEDERATION_CONTRACT.chain.chainId);
+  const { chainId } = await provider.getNetwork();
+  if (chainId !== expectedChain) {
+    throw new WalletPredictionError(`provider is on chain ${chainId}, expected chain ${expectedChain} — refusing to verify`);
+  }
+  const code = await provider.getCode(factoryAddress);
+  if (!code || code === '0x' || code === '0x0') {
+    throw new WalletPredictionError(`factory ${factoryAddress} has no code on chain ${expectedChain} — refusing to verify`);
+  }
+  const factory = new Contract(factoryAddress, FACTORY_ABI, provider);
   const onchain = getAddress(await factory.predictAddress!(userId));
   if (onchain !== local) {
     throw new WalletPredictionError(

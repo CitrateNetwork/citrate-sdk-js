@@ -6,9 +6,11 @@ import { ethers } from 'ethers';
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { CryptoManager } from '../crypto/CryptoManager';
 import { KeyManager } from '../crypto/KeyManager';
+import { assertNoKeyShareMaterial } from '../crypto/shareGuard';
 import {
   ModelConfig,
   ModelDeployment,
+  KeyShareEnvelope,
   ModelInfo,
   ModelStats
 } from '../types/Model';
@@ -244,6 +246,7 @@ export class CitrateClient {
     // Encrypt model if requested
     let encryptedData: Uint8Array = modelBytes;
     let encryptionMetadata: any = null;
+    let keyShareEnvelopes: KeyShareEnvelope[] | undefined;
 
     if (config.encrypted) {
       // SECREM-02 5.4 (FUA-SDK-JS-01 class): encryption requested must
@@ -257,6 +260,7 @@ export class CitrateClient {
       const result = await this.keyManager.encryptModel(modelBytes, config.encryptionConfig);
       encryptedData = result.encryptedData;
       encryptionMetadata = result.metadata;
+      keyShareEnvelopes = result.keyShareEnvelopes;
     }
 
     // Upload to IPFS
@@ -275,6 +279,10 @@ export class CitrateClient {
     if (encryptionMetadata) {
       txData.metadata.encryption = encryptionMetadata;
     }
+
+    // PBA-L4-001: this calldata is public. Refuse to send if anything in it,
+    // including caller-supplied metadata, carries a key-share field.
+    assertNoKeyShareMaterial(txData);
 
     // Deploy to blockchain — canonical INFERENCE_DEPLOY precompile from
     // constants (audit -004: no hardcoded address literals in the client).
@@ -300,7 +308,8 @@ export class CitrateClient {
       encrypted: config.encrypted,
       accessPrice: config.accessPrice,
       deploymentTime: Math.floor(Date.now() / 1000),
-      gasUsed: receipt.gasUsed
+      gasUsed: receipt.gasUsed,
+      ...(keyShareEnvelopes ? { keyShareEnvelopes } : {})
     };
   }
 

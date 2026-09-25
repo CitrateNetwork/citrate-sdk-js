@@ -5,7 +5,7 @@
 import { ethers } from 'ethers';
 import { CryptoManager } from './CryptoManager';
 import { splitSecretBytes, reconstructSecretBytes } from './FiniteField';
-import { EncryptionConfig } from '../types/Model';
+import { EncryptionConfig, KeyShareEnvelope } from '../types/Model';
 import { CitrateError } from '../errors/CitrateError';
 
 /// RM-G.3 — envelope scheme tag for the ECDH-wrapped format (the JS twin
@@ -53,14 +53,21 @@ function pubKeysEqual(a: string, b: string): boolean {
 
 export interface EncryptedModelResult {
   encryptedData: Uint8Array;
+  /** Public: `deployModel` writes this to calldata. Holds no key material. */
   metadata: {
     algorithm: string;
     nonce: string;
     keyDerivation: string;
     encryptedKey: string;
     accessControl: boolean;
-    keyShares?: Array<{ x: string; y: string; threshold: string; }>;
+    /** Share parameters only (no share values). */
+    keySharing?: { threshold: number; totalShares: number };
   };
+  /**
+   * PBA-L4-001: holder-wrapped Shamir shares, returned OUTSIDE `metadata` so
+   * they never reach deploy calldata. Deliver each to its holder off-chain.
+   */
+  keyShareEnvelopes?: KeyShareEnvelope[];
 }
 
 export class KeyManager {
@@ -128,6 +135,10 @@ export class KeyManager {
     const algorithm = config?.algorithm || 'AES-256-GCM';
     const keyDerivation = config?.keyDerivation || 'HKDF-SHA256';
 
+    // PBA-L4-001: validate the share plan BEFORE any key exists, so a bad
+    // config fails without producing anything.
+    const sharePlan = this.planKeySharing(config);
+
     // Generate random encryption key
     const encryptionKey = this.cryptoManager.generateRandomBytes(32);
 
@@ -137,15 +148,9 @@ export class KeyManager {
     // Encrypt the encryption key for owner
     const encryptedKey = await this.encryptKeyForOwner(encryptionKey);
 
-    // Create metadata
-    const metadata: {
-      algorithm: string;
-      nonce: string;
-      keyDerivation: string;
-      encryptedKey: string;
-      accessControl: boolean;
-      keyShares?: Array<{ x: string; y: string; threshold: string; }>;
-    } = {
+    // Create metadata. Everything in here is PUBLIC: deployModel writes it to
+    // calldata. It must never carry key material (PBA-L4-001).
+    const metadata: EncryptedModelResult['metadata'] = {
       algorithm,
       nonce: this.cryptoManager.bytesToHex(encrypted.nonce),
       keyDerivation,
@@ -156,15 +161,16 @@ export class KeyManager {
       accessControl: config?.accessControl ?? true
     };
 
-    // Add threshold sharing if enabled
-    if (config?.thresholdShares && config.thresholdShares > 0) {
-      const keyShares = this.createKeyShares(
-        encryptionKey,
-        config.thresholdShares,
-        config.totalShares
-      );
-      metadata.keyShares = keyShares;
+    let keyShareEnvelopes: KeyShareEnvelope[] | undefined;
+    if (sharePlan) {
+      // PBA-L4-001: the old code put every raw share into the deploy metadata,
+      // i.e. into public calldata, so anyone could rebuild the key. Each share
+      // is now ECDH-wrapped to its named holder and returned beside the
+      // metadata, never inside it.
+      keyShareEnvelopes = await this.wrapKeyShares(encryptionKey, sharePlan);
+      metadata.keySharing = { threshold: sharePlan.threshold, totalShares: sharePlan.total };
     }
+    encryptionKey.fill(0);
 
     // Combine ciphertext and auth tag
     const encryptedData = new Uint8Array(encrypted.ciphertext.length + encrypted.authTag.length);
@@ -173,8 +179,91 @@ export class KeyManager {
 
     return {
       encryptedData,
-      metadata
+      metadata,
+      ...(keyShareEnvelopes ? { keyShareEnvelopes } : {})
     };
+  }
+
+  /**
+   * Validate the threshold-sharing request (PBA-L4-001). Returns null when
+   * sharing is off. With `thresholdShares > 0` it requires exactly one distinct
+   * holder public key per share; there is no way to share a key without naming
+   * who receives each share.
+   */
+  private planKeySharing(
+    config?: EncryptionConfig
+  ): { threshold: number; total: number; holders: string[] } | null {
+    const threshold = config?.thresholdShares ?? 0;
+    if (!threshold) return null;
+    const total = config?.totalShares ?? 0;
+    if (!Number.isInteger(threshold) || !Number.isInteger(total) || threshold < 1 || threshold > total || total > 255) {
+      throw new CitrateError(
+        `encryptModel: invalid share parameters (thresholdShares=${threshold}, totalShares=${total}); ` +
+          'need integers with 1 <= thresholdShares <= totalShares <= 255.'
+      );
+    }
+    const holders = config?.shareHolderPublicKeys;
+    if (!holders || holders.length === 0) {
+      throw new CitrateError(
+        'encryptModel: thresholdShares > 0 requires shareHolderPublicKeys. Key shares are ' +
+          'never written to deploy metadata (it is public calldata); each share is wrapped ' +
+          'to a named holder key and returned for off-chain delivery (PBA-L4-001). Pass one ' +
+          'holder public key per share, or set thresholdShares to 0.'
+      );
+    }
+    if (holders.length !== total) {
+      throw new CitrateError(
+        `encryptModel: need one holder public key per share (totalShares=${total}, ` +
+          `shareHolderPublicKeys has ${holders.length}) (PBA-L4-001).`
+      );
+    }
+    let canonical: string[];
+    try {
+      canonical = holders.map(h => canonicalPubHex(h));
+    } catch {
+      throw new CitrateError('encryptModel: shareHolderPublicKeys contains an invalid secp256k1 public key.');
+    }
+    if (new Set(canonical).size !== canonical.length) {
+      throw new CitrateError(
+        'encryptModel: shareHolderPublicKeys must be distinct; one holder with several ' +
+          'shares defeats the threshold (PBA-L4-001).'
+      );
+    }
+    return { threshold, total, holders: canonical };
+  }
+
+  /** Split `key` and wrap share i to holder i with the ECDH V2 envelope. */
+  private async wrapKeyShares(
+    key: Uint8Array,
+    plan: { threshold: number; total: number; holders: string[] }
+  ): Promise<KeyShareEnvelope[]> {
+    const shares = splitSecretBytes(key, plan.threshold, plan.total);
+    const out: KeyShareEnvelope[] = [];
+    for (let i = 0; i < shares.length; i++) {
+      const share = shares[i]!;
+      const holder = plan.holders[i]!;
+      const envelope = await this.encryptData(this.cryptoManager.bytesToHex(share.y), holder);
+      share.y.fill(0);
+      out.push({ x: share.x, threshold: plan.threshold, holderPublicKey: holder, envelope });
+    }
+    return out;
+  }
+
+  /**
+   * Holder side of PBA-L4-001: open a key-share envelope addressed to this key.
+   * `ownerPublicKey` pins the sender (the model owner); an envelope from anyone
+   * else is refused. Returns the share in the form `reconstructKeyFromShares`
+   * takes.
+   */
+  async unwrapKeyShare(
+    share: KeyShareEnvelope,
+    ownerPublicKey: string
+  ): Promise<{ x: string; y: string; threshold: string }> {
+    if (!pubKeysEqual(canonicalPubHex(share.holderPublicKey), this.getPublicKey())) {
+      throw new CitrateError('unwrapKeyShare: this share is addressed to a different holder key.');
+    }
+    const y = await this.decryptData(share.envelope, ownerPublicKey);
+    return { x: String(share.x), y, threshold: String(share.threshold) };
   }
 
   /**
@@ -456,44 +545,32 @@ export class KeyManager {
   }
 
   /**
-   * Create Shamir's secret shares for key using proper finite field arithmetic
+   * Reconstruct a key from Shamir shares (Lagrange interpolation).
+   *
+   * PBA-L4-005: the threshold comes from the CALLER, never from the shares
+   * (an attacker-supplied share could lower it). The shares' x values are
+   * validated (integers in 1..255, distinct) before interpolation.
    */
-  private createKeyShares(
-    key: Uint8Array,
-    threshold: number,
-    total: number
-  ): Array<{ x: string; y: string; threshold: string }> {
-    const sharesTuples = splitSecretBytes(key, threshold, total);
-
-    return sharesTuples.map(({ x, y }) => ({
-      x: x.toString(),
-      y: this.cryptoManager.bytesToHex(y),
-      threshold: threshold.toString()
-    }));
-  }
-
-  /**
-   * Reconstruct key from Shamir's shares using proper Lagrange interpolation
-   */
-  reconstructKeyFromShares(shares: Array<{ x: string; y: string; threshold: string }>): Uint8Array {
-    if (!shares.length) {
-      throw new Error('No shares provided');
+  reconstructKeyFromShares(
+    shares: Array<{ x: string; y: string; threshold?: string }>,
+    threshold: number
+  ): Uint8Array {
+    if (!Number.isInteger(threshold) || threshold < 1 || threshold > 255) {
+      throw new CitrateError(`reconstructKeyFromShares: threshold must be an integer in 1..255, got ${String(threshold)}`);
     }
-
-    const firstShare = shares[0];
-    if (!firstShare) {
-      throw new Error('Invalid shares array');
+    if (!Array.isArray(shares) || shares.length === 0) {
+      throw new CitrateError('No shares provided');
     }
-    const threshold = parseInt(firstShare.threshold);
     if (shares.length < threshold) {
-      throw new Error('Insufficient shares for key reconstruction');
+      throw new CitrateError('Insufficient shares for key reconstruction');
     }
 
-    // Convert shares back to tuples format
-    const sharesTuples = shares.map(share => ({
-      x: parseInt(share.x),
-      y: this.cryptoManager.hexToBytes(share.y)
-    }));
+    const sharesTuples = shares.map(share => {
+      if (!/^[0-9]{1,3}$/.test(String(share.x))) {
+        throw new CitrateError(`Invalid share: x must be an integer in 1..255, got ${String(share.x)}`);
+      }
+      return { x: Number(share.x), y: this.cryptoManager.hexToBytes(share.y) };
+    });
 
     return reconstructSecretBytes(sharesTuples, threshold);
   }

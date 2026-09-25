@@ -96,6 +96,8 @@ console.log(result.outputData, result.txHash, result.gasUsed);
 
 **Encryption fails closed.** `encrypted: true` without a configured key refuses to upload rather than falling back to plaintext. Encrypted inference also requires `recipientPublicKey`.
 
+**Key sharing stays off-chain.** With `encryptionConfig.thresholdShares > 0` you must pass `shareHolderPublicKeys` (one distinct public key per share). Each share is wrapped to its holder and returned as `deployment.keyShareEnvelopes`; deliver those to the holders off-chain. Holders open theirs with `keyManager.unwrapKeyShare(envelope, ownerPublicKey)` and rebuild the key with `reconstructKeyFromShares(shares, threshold)`. Shares are never written to the deploy transaction (0.2.2 and earlier did that; see CHANGELOG).
+
 ### Streaming inference and events
 
 ```ts
@@ -153,9 +155,9 @@ const tokens = await id.exchangeCode({ code, codeVerifier: pkce.verifier, nonce 
 const user = await id.userInfo(tokens.accessToken);
 ```
 
-- **Sign-In with Ethereum:** `siweChallenge(address)` → sign the message → `siweVerify({ message, signature })`.
-- **Refresh:** `refresh(refreshToken)`.
-- **Verify an ID token yourself:** `identity.verifyIdToken(token, { issuer, audience, jwks, nonce })`. It checks signature, issuer, audience, expiry and nonce, and throws `IdTokenError` on any failure.
+- **Sign-In with Ethereum:** `const { nonce } = await id.siweChallenge()` → `identity.buildSiweMessage({ address, nonce })` → have the wallet sign it → `id.siweVerify({ message, signature })`. The result is `{ kind: 'redirect', redirectTo }` inside an OIDC login (navigate there to finish) or `{ kind: 'token', idToken, claims }` when the authority allows the headless grant.
+- **Refresh:** `refresh(refreshToken, tokens.claims.sub)`. A refreshed ID token for a different `sub` is refused.
+- **Verify an ID token yourself:** `identity.verifyIdToken(token, { issuer, audience, jwks, nonce })`. It checks signature, issuer, audience, `typ`, required `exp`/`iat`, expiry and nonce, and throws `IdTokenError` on any failure.
 - **Smart-wallet address:** `identity.predictWalletAddress(userId)` computes the user's counterfactual wallet offline. `identity.verifyWalletAddressOnChain(userId, provider)` confirms it against the on-chain factory and throws if they differ. Convert a Citrate user id with `identity.uuidToUserId(uuid)`.
 
 ### Embedded smart wallet (ERC-4337)

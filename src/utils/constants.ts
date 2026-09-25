@@ -14,12 +14,13 @@ import { FEDERATION_CONTRACT } from '../generated/contract';
 // was hardcoded `citrate-js-sdk/0.1.0` while the package shipped 0.2.0, so
 // server-side telemetry attributed traffic to a version that had not shipped for
 // two releases). Keep in lockstep with package.json `version`.
-export const SDK_VERSION = '0.2.2';
+export const SDK_VERSION = '0.2.3';
 
 // Network constants — chainId 40204 is permanent (PR #8396); the literal is
 // kept for type-narrowing, and guarded to equal the artifact below.
+// PBA-L8-016: the old `MAINNET: 1` entry was Ethereum mainnet's chain id, not a
+// Citrate network. Removed; there is no separate Citrate mainnet chain id.
 export const CHAIN_IDS = {
-  MAINNET: 1,       // Reserved for mainnet
   TESTNET: 40204,   // Testnet beta (rpc.citrate.ai)
 } as const;
 

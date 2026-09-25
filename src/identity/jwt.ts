@@ -6,6 +6,7 @@
  *  - alg-confusion (HS*) → rejected (we never treat the RSA public key as an HMAC secret)
  *  - wrong aud / iss     → rejected
  *  - expired / not-before→ rejected (with a small clock tolerance)
+ *  - missing exp         → rejected (PBA-L3a-011: a token with no exp never expired)
  *  - tampered signature  → rejected (RSA-SHA256 verify over the exact signing input)
  *
  * The authority signs RS256 (jwks kid e.g. citrate-1780633938850). We fetch the JWKS,
@@ -33,8 +34,8 @@ export interface IdTokenClaims {
   iss: string;
   sub: string;
   aud: string | string[];
-  exp?: number;
-  iat?: number;
+  exp: number;
+  iat: number;
   nbf?: number;
   nonce?: string;
   [k: string]: unknown;
@@ -72,6 +73,13 @@ export function verifyIdToken(token: string, opts: VerifyIdTokenOptions): IdToke
     throw new IdTokenError(`unsupported or unsafe alg: ${String(header['alg'])} (only RS256 accepted)`);
   }
   if (sigSeg.length === 0) throw new IdTokenError('empty signature');
+  // PBA-L6b-029 (variant, parity with the Python SDK): an access token
+  // (`at+jwt`, RFC 9068) or logout token signed by the same key for the same
+  // audience must not pass as an ID token. ID tokens carry no typ or `JWT`.
+  const typ = header['typ'];
+  if (typ !== undefined && (typeof typ !== 'string' || typ.toUpperCase() !== 'JWT')) {
+    throw new IdTokenError(`unexpected token typ: ${JSON.stringify(typ)} (an ID token has typ JWT or none)`);
+  }
 
   const kid = typeof header['kid'] === 'string' ? (header['kid'] as string) : undefined;
   const rsaKeys = opts.jwks.filter((k) => k.kty === 'RSA' && k.n && k.e);
@@ -96,7 +104,16 @@ export function verifyIdToken(token: string, opts: VerifyIdTokenOptions): IdToke
 
   const nowSec = Math.floor((opts.now ?? Date.now()) / 1000);
   const tol = opts.clockToleranceSec ?? 60;
-  if (typeof payload.exp === 'number' && nowSec > payload.exp + tol) throw new IdTokenError('token expired');
+  // PBA-L3a-011: `exp` is REQUIRED (OIDC Core 2, "REQUIRED"). The old check
+  // ran only when `exp` happened to be a number, so a token with no `exp`, or a
+  // string one, never expired.
+  if (!Number.isFinite(payload.exp)) {
+    throw new IdTokenError('token has no numeric exp claim');
+  }
+  if (!Number.isFinite(payload.iat)) {
+    throw new IdTokenError('token has no numeric iat claim');
+  }
+  if (nowSec > payload.exp + tol) throw new IdTokenError('token expired');
   if (typeof payload.nbf === 'number' && nowSec + tol < payload.nbf) throw new IdTokenError('token not yet valid');
   if (opts.nonce !== undefined && payload.nonce !== opts.nonce) throw new IdTokenError('nonce mismatch');
 

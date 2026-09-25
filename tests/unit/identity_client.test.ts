@@ -23,6 +23,7 @@ function idToken(extra: Record<string, unknown>): string {
     iss: ID.issuer,
     sub: 'user-1',
     aud: CLIENT_ID,
+    iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + 3600,
     ...extra,
   };
