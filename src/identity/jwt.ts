@@ -6,6 +6,7 @@
  *  - alg-confusion (HS*) → rejected (we never treat the RSA public key as an HMAC secret)
  *  - wrong aud / iss     → rejected
  *  - expired / not-before→ rejected (with a small clock tolerance)
+ *  - missing exp         → rejected (PBA-L3a-011: a token with no exp never expired)
  *  - tampered signature  → rejected (RSA-SHA256 verify over the exact signing input)
  *
  * The authority signs RS256 (jwks kid e.g. citrate-1780633938850). We fetch the JWKS,
@@ -33,7 +34,7 @@ export interface IdTokenClaims {
   iss: string;
   sub: string;
   aud: string | string[];
-  exp?: number;
+  exp: number;
   iat?: number;
   nbf?: number;
   nonce?: string;
@@ -96,7 +97,13 @@ export function verifyIdToken(token: string, opts: VerifyIdTokenOptions): IdToke
 
   const nowSec = Math.floor((opts.now ?? Date.now()) / 1000);
   const tol = opts.clockToleranceSec ?? 60;
-  if (typeof payload.exp === 'number' && nowSec > payload.exp + tol) throw new IdTokenError('token expired');
+  // PBA-L3a-011: `exp` is REQUIRED (OIDC Core 2, "REQUIRED"). The old check
+  // ran only when `exp` happened to be a number, so a token with no `exp`, or a
+  // string one, never expired.
+  if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) {
+    throw new IdTokenError('token has no numeric exp claim');
+  }
+  if (nowSec > payload.exp + tol) throw new IdTokenError('token expired');
   if (typeof payload.nbf === 'number' && nowSec + tol < payload.nbf) throw new IdTokenError('token not yet valid');
   if (opts.nonce !== undefined && payload.nonce !== opts.nonce) throw new IdTokenError('nonce mismatch');
 
