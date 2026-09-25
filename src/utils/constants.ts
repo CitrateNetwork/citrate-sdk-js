@@ -14,7 +14,7 @@ import { FEDERATION_CONTRACT } from '../generated/contract';
 // was hardcoded `citrate-js-sdk/0.1.0` while the package shipped 0.2.0, so
 // server-side telemetry attributed traffic to a version that had not shipped for
 // two releases). Keep in lockstep with package.json `version`.
-export const SDK_VERSION = '0.2.0';
+export const SDK_VERSION = '0.2.2';
 
 // Network constants — chainId 40204 is permanent (PR #8396); the literal is
 // kept for type-narrowing, and guarded to equal the artifact below.

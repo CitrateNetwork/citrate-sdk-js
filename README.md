@@ -1,138 +1,289 @@
-# citrate-sdk-js
+# @citratelabs/sdk
 
-*Part of the **[Citrate Network](https://citrate.ai)** — own the means of computation. · [Docs](https://docs.citrate.ai) · [Run a node](https://citrate.ai/download) · [Contribute → free membership](https://github.com/CitrateNetwork/.github/blob/main/CONTRIBUTING.md)*
-> The canonical TypeScript/JavaScript SDK for the Citrate Network (chain **40204**) — talk to the chain, deploy and run models, and call the inference gateway from Node or the browser.
+The TypeScript/JavaScript SDK for the [Citrate Network](https://citrate.ai), an AI-native Layer-1 BlockDAG (chain id **40204**, native token **SALT**). One package covers the whole developer surface: chain reads and signed transactions, on-chain model deployment and inference, the OpenAI-compatible inference gateway, Citrate identity (OIDC + SIWE), the ERC-4337 embedded smart wallet, entitlements, and agent memory.
 
-## What it is
-`@citratelabs/sdk` is the reference client for the Citrate distributed-AI network: a
-JSON-RPC client (`CitrateClient`) for chain reads/writes and model/inference precompiles,
-an OpenAI-compatible inference-gateway client (`GatewayClient`), plus embedded
-smart-account (ERC-4337) wallet, OIDC/SIWE identity, and entitlement helpers. Chain-varying
-values (RPC/WS endpoints, contract addresses, chain id 40204) are derived from a vendored
-federation-contract artifact, so they can never drift against a chain re-roll. This is the
-**canonical** SDK; the Python client mirrors it.
+Works in Node.js (≥ 16; 20 LTS recommended) and the browser. Ships ESM, CommonJS and type declarations.
 
-See the concepts in the docs: <https://docs.citrate.ai>.
-Depends on a running chain node ([citrate-chain](https://github.com/CitrateNetwork/citrate-chain))
-and, for inference, the gateway ([citrate-inference-gateway](https://github.com/CitrateNetwork/citrate-inference-gateway)).
-
-## Prerequisites
 ```bash
-# Node 16+ (engines floor); Node 20 LTS recommended
-node --version   # >= v16.0.0
-npm --version
-
-# Toolchain versions are pinned in package.json; no global installs needed.
-# Optional, only for the "Connect it locally" section:
-#   - a local Citrate devnet node exposing JSON-RPC on :8545
-#   - foundry (anvil/forge) if you run the chain's local devnet + contract book
+npm install @citratelabs/sdk
 ```
 
-## Build from source
+## Quickstart
+
+```ts
+import { CitrateClient, DEFAULT_RPC_URLS, CHAIN_IDS } from '@citratelabs/sdk';
+
+const client = new CitrateClient({
+  rpcUrl: DEFAULT_RPC_URLS[CHAIN_IDS.TESTNET],   // ['https://rpc.citrate.ai']
+  privateKey: process.env.CITRATE_PRIVATE_KEY,     // optional; needed only to sign
+});
+
+console.log(await client.getChainId());            // 40204
+console.log(await client.getBalance());            // bigint, in wei (SALT has 18 decimals)
+```
+
+If `getChainId()` returns `40204`, you are connected.
+
+## What the SDK covers
+
+| Area | Import | Use it to |
+|---|---|---|
+| Chain client | `CitrateClient` | Read chain state, sign and send transactions, deploy models, run on-chain inference |
+| Streaming | `WebSocketClient` | Stream inference results and subscribe to model / marketplace events |
+| Inference gateway | `gateway.GatewayClient` | Call hosted models through an OpenAI-compatible API (`/v1/chat/completions`) |
+| Identity | `identity.*` | Sign users in with OIDC (PKCE) or Sign-In with Ethereum, verify ID tokens, predict a user's wallet address |
+| Embedded wallet | `aa.*` | Build, sign (passkey or EOA) and submit ERC-4337 user operations for a user's smart account |
+| Entitlements | `entitlements.*` | Turn an identity claim into capabilities (`can(claim, 'gatewayKeys')`) |
+| Memory | `memory.*` | Read and write agent memory on a citrate-memories gateway (REST or MCP) |
+| Crypto | `KeyManager`, `CryptoManager`, `ShamirSecretSharing` | Keys, signing, ECDH encryption, hashing, secret sharing |
+| React | `@citratelabs/sdk/react/hooks` | `useCitrateClient`, `useInference`, `useModelDeployment`, `useModelInfo`, `useModelList` |
+| Network constants | `CHAIN_IDS`, `DEFAULT_RPC_URLS`, `AA_ADDRESSES`, `CONTRACT_ADDRESSES`, `PRECOMPILES`, … | Canonical addresses and endpoints (never hardcode them) |
+
+Namespaced modules are imported as a group:
+
+```ts
+import { gateway, identity, aa, entitlements, memory } from '@citratelabs/sdk';
+```
+
+## Guides
+
+### Connecting to the chain
+
+```ts
+const client = new CitrateClient({
+  rpcUrl: ['https://rpc.citrate.ai', 'https://rpc-backup.example'], // array = automatic failover
+  privateKey: process.env.CITRATE_PRIVATE_KEY,
+  timeout: 30_000,
+  retries: 3,
+});
+```
+
+- **Failover.** Pass several RPC URLs and the client moves to the next one on a transport error (DNS, refused connection, timeout). A JSON-RPC error from a reachable node is a real answer and is returned, not retried.
+- **Transport security.** Remote `http://` and `ws://` endpoints are refused, because signed transactions and keys would travel in cleartext. Loopback (`localhost`, `127.0.0.1`) is always allowed. Set `allowInsecureHttp: true` only for a trusted internal network without TLS.
+- **Without a private key** the client is read-only. Signing methods throw a `CitrateError`.
+
+Read methods: `getChainId()`, `getBalance(address?)`, `getNonce(address?)`, `getAddress()`, `getRpcUrls()`.
+
+### Models and on-chain inference
+
+Model operations go through the chain's AI precompiles and require a signer.
+
+```ts
+import { CitrateClient, ModelType, AccessType } from '@citratelabs/sdk';
+
+const deployment = await client.deployModel(modelBytes, {
+  name: 'sentiment-v1',
+  modelType: ModelType.ONNX,
+  accessType: AccessType.PAID,
+  accessPrice: 10n ** 15n,   // wei per inference
+  encrypted: false,
+});
+
+const result = await client.inference({
+  modelId: deployment.modelId,
+  inputData: { text: 'Citrate is fast' },
+});
+console.log(result.outputData, result.txHash, result.gasUsed);
+```
+
+| Method | What it does |
+|---|---|
+| `deployModel(bytes, config)` | Hashes the model, optionally encrypts it, uploads it (IPFS if `ipfsApiUrl` is set, otherwise records the content hash), and sends a deploy transaction to the `INFERENCE_DEPLOY` precompile. Returns `modelId`, `txHash`, `ipfsHash`, `gasUsed`. |
+| `inference(request)` | Sends an inference transaction to the `INFERENCE_RUN` precompile and returns the output with its `txHash`. |
+| `batchInference(request)` | Runs several inputs against one model. |
+| `getModelInfo(modelId)` / `listModels(owner?, limit?)` | Read model metadata over JSON-RPC (`citrate_getModel`, `citrate_listModels`). |
+| `purchaseModelAccess(...)` | **Disabled on purpose.** It throws, because the chain has no access-purchase precompile yet. An earlier version sent buyer funds to a precompile that never granted access. |
+
+**Encryption fails closed.** `encrypted: true` without a configured key refuses to upload rather than falling back to plaintext. Encrypted inference also requires `recipientPublicKey`.
+
+### Streaming inference and events
+
+```ts
+import { WebSocketClient } from '@citratelabs/sdk';
+
+const ws = new WebSocketClient({ url: 'wss://rpc.citrate.ai/ws' });
+await ws.connect();
+await ws.startStreamingInference({
+  modelId,
+  inputData: { prompt: 'Explain GhostDAG' },
+  onPartialResult: (p) => process.stdout.write(String(p.outputData?.text ?? '')),
+  onComplete: (r) => console.log('\ndone', r.txHash),
+  onError: console.error,
+});
+```
+
+Also: `subscribeToModel(modelId)`, `unsubscribeFromModel(modelId)`, `subscribeToMarketplace()`, `sendMessage(method, params)`, `disconnect()`. The client reconnects automatically (`reconnectAttempts`, `reconnectInterval`).
+
+### Inference gateway (OpenAI-compatible)
+
+Hosted models behind `https://infer.citrate.ai`. Authenticate with a `cgk_` gateway key.
+
+```ts
+import { gateway } from '@citratelabs/sdk';
+
+const gw = new gateway.GatewayClient({ apiKey: process.env.CITRATE_GATEWAY_API_KEY! });
+
+const reply = await gw.chatCompletions({
+  model: 'gemma-4-E4B-it-Q4_K_M',
+  messages: [{ role: 'user', content: 'Say hi from Citrate' }],
+});
+```
+
+Also: `listModels()`, `getUsage()`, `health()`. Errors are `gateway.GatewayError` with the HTTP `status`. Point `baseUrl` at a local gateway for development.
+
+### Identity: sign in with OIDC or Ethereum
+
+`identity.IdentityClient` talks to `auth.citrate.ai`. The issuer is pinned to the SDK's network artifact, so a spoofed discovery document can't redirect tokens elsewhere.
+
+```ts
+import { identity } from '@citratelabs/sdk';
+
+const id = new identity.IdentityClient({
+  clientId: 'your-client-id',
+  redirectUri: 'https://yourapp.example/callback',
+});
+
+// 1. Send the user to the authorize URL (PKCE is generated for you)
+const { url, pkce } = id.authorizeUrl({ state, nonce });
+
+// 2. On the callback, exchange the code
+const tokens = await id.exchangeCode({ code, codeVerifier: pkce.verifier, nonce });
+
+// 3. Read the profile: user.tier and user.capabilities come from the entitlement claim
+const user = await id.userInfo(tokens.accessToken);
+```
+
+- **Sign-In with Ethereum:** `siweChallenge(address)` → sign the message → `siweVerify({ message, signature })`.
+- **Refresh:** `refresh(refreshToken)`.
+- **Verify an ID token yourself:** `identity.verifyIdToken(token, { issuer, audience, jwks, nonce })`. It checks signature, issuer, audience, expiry and nonce, and throws `IdTokenError` on any failure.
+- **Smart-wallet address:** `identity.predictWalletAddress(userId)` computes the user's counterfactual wallet offline. `identity.verifyWalletAddressOnChain(userId, provider)` confirms it against the on-chain factory and throws if they differ. Convert a Citrate user id with `identity.uuidToUserId(uuid)`.
+
+### Embedded smart wallet (ERC-4337)
+
+Every Citrate user has one smart account (ERC-4337 v0.7, Kernel v3) at the same address on every surface. `aa` provides the pieces to act from it:
+
+1. `uuidToUserId(citrateUserId)` → 32-byte user id
+2. `predictWalletAddress(factory, walletImpl, userId)` → the account address
+3. First operation only: request a deploy permit from `auth.citrate.ai/aa/enroll-validator`, then `encodeDeployFor` + `packInitCode` → `initCode`
+4. `encodeExecuteSingle` / `encodeExecuteBatch` → `callData`; read the nonce from the EntryPoint
+5. `buildPackedUserOp` + `packCitratePaymasterAndData` → the operation; `getUserOpHash` → its hash
+6. `signUserOpWithPasskey` (WebAuthn P-256) or `signUserOpWithEoa` → signature
+7. `new aa.BundlerClient()` → `sendUserOperation`, then `waitForUserOperationReceipt`
+
+Account recovery: `guardianRecoveryDigest`, `packGuardianSignatures`, `buildRotateSignerCall`. The bundler defaults to `aa.CITRATE_BUNDLER_URL` (`https://bundler.citrate.ai/rpc`) and accepts a `bk_` API key.
+
+### Entitlements
+
+Five tiers: `public`, `commercial`, `commercial.kyc`, `academic`, `confidential`. Capabilities are explicit sets, never inferred from tier order.
+
+```ts
+import { entitlements } from '@citratelabs/sdk';
+
+entitlements.normalizeTier('commercial.kyc');               // canonical tier string
+entitlements.can({ tier: user.tier }, 'gatewayKeys');       // may this user mint gateway keys?
+```
+
+Capabilities: `ecosystemTx`, `gatewayKeys`, `academicData`, `confidentialDocs`. A claim may also carry `citrateRole` and `expiresAt` (access past expiry collapses to `public`). See also `capabilitiesForClaim`, `resolveCapabilities`, `DEFAULT_CAPABILITIES`.
+
+### Agent memory
+
+Typed clients for a [citrate-memories](https://github.com/CitrateNetwork/citrate-memories) gateway.
+
+```ts
+import { memory } from '@citratelabs/sdk';
+
+const mem = new memory.MemoryClient({ origin: 'https://mem-gateway.example.com', idToken });
+const org = mem.org('my-org');
+
+await org.recall({ repo: 'my-agent' });
+await org.search({ repo: 'my-agent', q: 'deploy runbook' });
+await org.neighbors({ repo: 'my-agent', id: nodeId });
+await org.assert({ /* AssertInput */ });
+```
+
+For MCP-style agent integrations use `memory.ByomMemoryClient` (`recall`, `search`, `asOf`, `verify`, `critique`, `analogy`, `assert`, `mergeDiff`, `proposeEdge`, `confirmEdge`), authenticated with a connect token.
+
+### Crypto utilities
+
+- `KeyManager(privateKey?)`: address and public key, `signTransaction`, ECDH `encryptData` / `decryptData`, key-share reconstruction.
+- `CryptoManager`: SHA-256 hashing, HMAC, secure random bytes, hex/string helpers. PBKDF2 uses 600,000 iterations by default.
+- `ShamirSecretSharing`, `splitSecretBytes`, `reconstructSecretBytes`: threshold secret sharing over GF(256).
+
+### React
+
+```tsx
+import { useCitrateClient, useInference } from '@citratelabs/sdk/react/hooks';
+
+const { client, isConnected, error } = useCitrateClient({ rpcUrl: 'https://rpc.citrate.ai' });
+const { execute, result, isExecuting } = useInference(client);
+```
+
+React ≥ 16.8 is an optional peer dependency; the main entry point never imports it.
+
+## Network constants
+
+Addresses and endpoints come from a vendored network artifact (`src/generated/federation-contract.json`), so they stay correct across chain redeployments. Import them; don't copy literals.
+
+| Constant | Value / contents |
+|---|---|
+| `CHAIN_IDS.TESTNET` | `40204` |
+| `DEFAULT_RPC_URLS[40204]` | `['https://rpc.citrate.ai']` |
+| `DEFAULT_WS_URLS[40204]` | `'wss://rpc.citrate.ai/ws'` |
+| `AA_ADDRESSES` | EntryPoint, wallet factory, paymaster, validators |
+| `CONTRACT_ADDRESSES` | Named application contracts (ModelRegistry, …) |
+| `MEMBERSHIP_ADDRESSES` | Membership SBT and stake vault |
+| `PRECOMPILES` | The canonical precompile table (prefer this over the legacy `PRECOMPILE_ADDRESSES`) |
+
+Block explorer: <https://explorer.citrate.ai>. Maintainers refresh the artifact with `npm run sync-contract`.
+
+## Errors
+
+Every SDK error extends `CitrateError`: `NetworkError`, `AuthenticationError`, `ValidationError`, `ModelNotFoundError`, `ModelDeploymentError`, `InferenceError`, `InsufficientFundsError`, `EncryptionError`, `TimeoutError`, `ConfigurationError`, `IPFSError`. Module clients add their own: `gateway.GatewayError`, `memory.MemoryError`, `identity.IdentityError`, `identity.IdTokenError`, `aa.BundlerRpcError`.
+
+## For AI agents
+
+Read this section before generating code against this package.
+
+- **Entry points.** Chain: `CitrateClient`. Hosted inference: `gateway.GatewayClient`. Sign-in: `identity.IdentityClient`. Smart-account transactions: `aa.*` + `aa.BundlerClient`. Memory: `memory.MemoryClient` / `memory.ByomMemoryClient`. `GatewayClient` and the other module clients are **not** top-level exports; import the namespace (`import { gateway } from '@citratelabs/sdk'`).
+- **Network.** Chain id is `40204`. Take RPC URLs, contract addresses and precompile addresses from the exported constants. Never hardcode an address.
+- **Calls that sign or spend** (need `privateKey`, cost gas): `deployModel`, `inference`, `batchInference`. Everything else on `CitrateClient` is a read.
+- **Deliberately disabled:** `purchaseModelAccess` always throws. Don't work around it.
+- **Fail-closed behavior is intentional.** Remote `http://` endpoints are refused, encryption never downgrades to plaintext, and a wallet address that doesn't match the on-chain factory throws. Surface these errors to the user; don't disable the checks.
+- **Credentials.** `privateKey`, `cgk_` gateway keys, `bk_` bundler keys, ID tokens and memory connect tokens are secrets. Read them from the environment and never log them.
+- **Environment variables used by examples and tests:** `CITRATE_RPC_URL`, `CITRATE_CHAIN_ID`, `CITRATE_PRIVATE_KEY`, `CITRATE_GATEWAY_API_KEY`.
+
+## Local development
+
+Run against a local Citrate stack instead of the public testnet:
+
+1. Start a devnet node from [citrate-chain](https://github.com/CitrateNetwork/citrate-chain). It serves JSON-RPC on `http://localhost:8545`.
+2. Point the client at it (loopback `http://` needs no opt-in):
+   ```ts
+   const client = new CitrateClient({
+     rpcUrl: 'http://localhost:8545',
+     privateKey: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', // public Anvil test key #0
+   });
+   ```
+3. Optionally run [citrate-inference-gateway](https://github.com/CitrateNetwork/citrate-inference-gateway) and pass `baseUrl: 'http://localhost:8080'` to `gateway.GatewayClient`.
+
+### Build and test this package
+
 ```bash
 git clone https://github.com/CitrateNetwork/citrate-sdk-js.git
 cd citrate-sdk-js
 npm install
-npm run build          # tsup → dist/ (index.js, index.mjs, index.d.ts, react/hooks.*)
-npm test               # unit tests (jest); integration tests are excluded here
+npm run build              # tsup → dist/
+npm test                   # unit tests, offline
+CITRATE_RPC_URL=http://localhost:8545 CITRATE_CHAIN_ID=40204 npm run test:integration
 ```
-Expected artifacts land in `dist/`. Unit tests run offline; integration tests require a
-node (see below). Build is fast (< 30s) and low-RAM.
-
-## Run locally
-This is a library, not a service — there is no port to open. Install it into an app and
-point it at a network:
-
-```bash
-# In your app
-npm install @citratelabs/sdk
-```
-
-30-second Quickstart (against the public testnet, chain 40204):
-```ts
-import { CitrateClient } from '@citratelabs/sdk';
-
-const client = new CitrateClient({
-  rpcUrl: 'https://rpc.citrate.ai',            // testnet default (chain 40204)
-  privateKey: process.env.CITRATE_PRIVATE_KEY, // optional; required to sign
-});
-
-const chainId = await client.getChainId();     // 40204
-console.log('connected to chain', chainId);
-const balance = await client.getBalance();     // wallet balance in wei (bigint)
-console.log('balance', balance.toString());
-```
-
-Call the inference gateway (OpenAI-compatible; needs a `cgk_` key):
-```ts
-import { GatewayClient } from '@citratelabs/sdk';
-
-const gw = new GatewayClient({ apiKey: process.env.CITRATE_GATEWAY_API_KEY! });
-const res = await gw.chatCompletions({
-  model: 'gemma-4-E4B-it-Q4_K_M',
-  messages: [{ role: 'user', content: 'Say hi from Citrate' }],
-});
-console.log(res);
-```
-Verify it's up: `getChainId()` returning `40204` confirms the RPC is reachable.
-
-> Security: the client **fails closed** on a remote plaintext (`http://` / `ws://`) RPC or
-> gateway URL — signed transactions and keys would otherwise go out in cleartext. Loopback
-> (`localhost`/`127.0.0.1`) is always allowed. For a trusted TLS-less internal host, pass
-> `allowInsecureHttp: true`.
-
-## Connect it locally  ← the differentiator
-Point the SDK at a local Citrate stack on one machine instead of the public testnet.
-
-1. **Local chain** — run a Citrate devnet node (chain 40204) from
-   [citrate-chain](https://github.com/CitrateNetwork/citrate-chain) and deploy the contract
-   book with its foundry script. It exposes JSON-RPC on `http://localhost:8545`.
-2. **Point the SDK at it** (loopback `http://` is allowed without opt-in):
-   ```ts
-   const client = new CitrateClient({
-     rpcUrl: 'http://localhost:8545',
-     privateKey: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', // anvil acct #0
-   });
-   console.log(await client.getChainId()); // expect 40204
-   ```
-3. **Local inference gateway** (optional) — run
-   [citrate-inference-gateway](https://github.com/CitrateNetwork/citrate-inference-gateway)
-   and point the gateway client at it:
-   ```ts
-   const gw = new GatewayClient({
-     apiKey: process.env.CITRATE_GATEWAY_API_KEY!,
-     baseUrl: 'http://localhost:8080',   // loopback allowed
-   });
-   ```
-4. **End-to-end check** — run the integration suite against your local node:
-   ```bash
-   CITRATE_RPC_URL=http://localhost:8545 CITRATE_CHAIN_ID=40204 npm run test:integration
-   # or the convenience script:
-   npm run test:integration:testnet
-   ```
-
-For the full multi-repo bring-up (chain → identity → bundler → gateway → SDKs), see the
-LOCAL_STACK guide at <https://docs.citrate.ai>.
-
-## Configuration
-| Env var | Default | Purpose |
-|---------|---------|---------|
-| `CITRATE_RPC_URL` | `http://localhost:8545` (tests) / `https://rpc.citrate.ai` (testnet) | chain JSON-RPC endpoint |
-| `CITRATE_CHAIN_ID` | `40204` | expected chain id (used by the integration suite) |
-| `CITRATE_PRIVATE_KEY` | — | signer key for transactions/inference |
-| `CITRATE_GATEWAY_API_KEY` | — | `cgk_` bearer key for the inference gateway |
-
-`CitrateClient` also accepts `rpcUrl` as an **array** for multi-RPC failover, `ipfsApiUrl`
-(unset = skip IPFS upload, use the content hash), `timeout`, `retries`, and
-`allowInsecureHttp`. The gateway base URL and chain id default to the vendored federation
-artifact and are refreshed with `npm run sync-contract`.
 
 ## Links
-- Docs: <https://docs.citrate.ai>
-- Depends on: [citrate-chain](https://github.com/CitrateNetwork/citrate-chain) · [citrate-inference-gateway](https://github.com/CitrateNetwork/citrate-inference-gateway) · [citrate-identity](https://github.com/CitrateNetwork/citrate-identity)
-- Consumed by: [citrate-sdk-marketplace](https://github.com/CitrateNetwork/citrate-sdk-marketplace) and the Citrate webapps/agents
-- Contributing (DCO): `CONTRIBUTING.md` · Security: `SECURITY.md` · License: [`LICENSE`](LICENSE)
+
+- Documentation: <https://docs.citrate.ai>
+- Python SDK: [citrate-sdk-python](https://github.com/CitrateNetwork/citrate-sdk-python) · Marketplace SDK: [citrate-sdk-marketplace](https://github.com/CitrateNetwork/citrate-sdk-marketplace)
+- Security: [Citrate security policy](https://github.com/CitrateNetwork/.github/blob/main/SECURITY.md), or report privately through GitHub
+- Contributing: [contribution guide](https://github.com/CitrateNetwork/.github/blob/main/CONTRIBUTING.md)
 
 ## License
 
-Licensed under the Apache License, Version 2.0 (see [`LICENSE`](LICENSE)). This is the open-source infrastructure tier of Citrate's open-core model. The commercial application layer is source-available under BUSL-1.1. Licensor: Citrate Inc.
+Apache License 2.0. See [`LICENSE`](LICENSE).
