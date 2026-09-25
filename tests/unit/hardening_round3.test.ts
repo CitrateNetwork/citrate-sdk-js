@@ -17,7 +17,6 @@ describe('share guard: no false positives on coordinate-like metadata', () => {
     [{ x: 1.5, y: Y32 }],
     [{ x: 'one', y: Y32 }],
     [{ x: 1, y: 'ab'.repeat(15) }],
-    [{ x: 1, y: 'abc'.repeat(11) }],
     [{ x: 1, y: new Uint8Array(2) }],
     [{ grid: JSON.stringify({ x: 3, y: '1234' }) }],
     [{ x: '0', y: Y32 }],
@@ -45,6 +44,8 @@ describe('share guard: no false positives on coordinate-like metadata', () => {
     [{ a: { x: '1', y: Y32 } }],
     [{ a: { x: '255', y: Y32 } }],
     [{ a: { x: 1, y: new Uint8Array(16) } }],
+    // Odd-length share-sized hex: lenient decoders elsewhere still read it.
+    [{ a: { x: 1, y: 'abc'.repeat(11) } }],
   ])('refuses share-shaped case %#', (meta) => {
     expect(() => assertNoKeyShareMaterial(meta)).toThrow(/shaped like a key share/);
   });
