@@ -48,8 +48,9 @@ function looksLikeShare(o: Record<string, unknown>): boolean {
  */
 export function assertNoKeyShareMaterial(value: unknown, depth = 0): void {
   if (depth === 0 && value !== null && typeof value === 'object') {
-    // Check what is actually sent: JSON.stringify honours toJSON(), which a
-    // plain object walk does not see.
+    // Also check the serialised form, which honours toJSON(). Callers that
+    // send data should serialise once and pass JSON.parse of those exact
+    // bytes (as deployModel does), so the guard sees precisely what is sent.
     let wire: unknown;
     try {
       wire = JSON.parse(JSON.stringify(value));

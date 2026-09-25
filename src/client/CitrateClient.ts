@@ -280,15 +280,18 @@ export class CitrateClient {
       txData.metadata.encryption = encryptionMetadata;
     }
 
-    // PBA-L4-001: this calldata is public. Refuse to send if anything in it,
-    // including caller-supplied metadata, carries a key-share field.
-    assertNoKeyShareMaterial(txData);
+    // PBA-L4-001: this calldata is public. Serialise ONCE, run the share
+    // guard on JSON.parse of exactly those bytes, and send those same bytes,
+    // so the guard judges what is sent rather than how live values (toJSON,
+    // getters, proxies) answer on a particular read.
+    const wire = JSON.stringify(txData);
+    assertNoKeyShareMaterial(JSON.parse(wire));
 
     // Deploy to blockchain — canonical INFERENCE_DEPLOY precompile from
     // constants (audit -004: no hardcoded address literals in the client).
     const tx = await this.wallet.sendTransaction({
       to: PRECOMPILE_ADDRESSES.INFERENCE_DEPLOY,
-      data: ethers.hexlify(ethers.toUtf8Bytes(JSON.stringify(txData))),
+      data: ethers.hexlify(ethers.toUtf8Bytes(wire)),
       gasLimit: 500000n
     });
 
