@@ -21,8 +21,13 @@ const hooksSource = readFileSync(join(root, 'src', 'react', 'hooks.ts'), 'utf8')
 
 const NAMESPACES = ['gateway', 'identity', 'aa', 'entitlements', 'memory'] as const;
 
+/** Escape every RegExp metacharacter, backslash included. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[\\^$.*+?()[\]{}|/]/g, '\\$&');
+}
+
 function importedNames(from: string): string[] {
-  const re = new RegExp(`import\\s*\\{([^}]+)\\}\\s*from\\s*'${from.replace(/[/.]/g, '\\$&')}'`, 'g');
+  const re = new RegExp(`import\\s*\\{([^}]+)\\}\\s*from\\s*'${escapeRegExp(from)}'`, 'g');
   const names: string[] = [];
   for (const m of readme.matchAll(re)) {
     for (const part of (m[1] as string).split(',')) {
