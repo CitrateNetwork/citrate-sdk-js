@@ -4,6 +4,23 @@ All notable changes to `@citratelabs/sdk` are documented here. This project
 follows [Semantic Versioning](https://semver.org/); while it is 0.x, a patch
 release may carry breaking changes when a security fix requires them.
 
+## [0.2.4] - 2026-09-25 — Hardening
+
+### Changed
+
+- `deployModel` serialises the transaction payload once, runs the key-share
+  guard on the parsed form of those exact bytes, and sends the same bytes.
+
+### Tests
+
+- A differential property test runs the share guard against the strict
+  `hexToBytes` parser and other known hex decoders over generated near-hex
+  input.
+
+### Compatibility shim
+
+- `@citratelabs/citrate-js` 0.2.4 re-exports `@citratelabs/sdk` 0.2.4.
+
 ## [0.2.3] - 2026-09-25 — Pre-bounty audit remediation (SECURITY)
 
 > **Security advisory: upgrade from 0.2.0 – 0.2.2.**
