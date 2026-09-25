@@ -79,7 +79,7 @@ jobs:
           if npm view "$NAME@$VER" version >/dev/null 2>&1; then
             echo "$NAME@$VER already published; skipping."
           else
-            npm publish --access public --provenance
+            npm publish --access public --provenance --loglevel verbose
           fi
       # The deprecated compatibility shim re-exports @citratelabs/sdk. Skips
       # cleanly if its version is already on the registry, so it only goes out
@@ -93,5 +93,5 @@ jobs:
           if npm view "$NAME@$VER" version >/dev/null 2>&1; then
             echo "$NAME@$VER already published; skipping."
           else
-            npm publish --access public --provenance
+            npm publish --access public --provenance --loglevel verbose
           fi
