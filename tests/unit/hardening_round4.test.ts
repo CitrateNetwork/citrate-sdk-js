@@ -18,7 +18,7 @@ import { KeyManager } from '../../src/crypto/KeyManager';
 import { assertNoKeyShareMaterial } from '../../src/crypto/shareGuard';
 
 const VECTORS = path.join(__dirname, '../fixtures/share_guard_vectors.json');
-const VECTORS_SHA256 = '8f336f469be58046e7984bf61756d513df9ba497aca8feb9fc8641e2c6a4b805';
+const VECTORS_SHA256 = '674d35d72f4fca132e59e325efec3a61fcb4cbe7d6cfc5afd85d1821afcf884f';
 const Y = 'ab'.repeat(32);
 
 describe('shared vectors', () => {
@@ -76,5 +76,26 @@ describe('round-4 edges', () => {
   it('hexToBytes refuses a non-string even if it stringifies to hex', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(() => new CryptoManager().hexToBytes(1234 as any)).toThrow(/hex/);
+  });
+});
+
+describe('byte forms and key case (round 7)', () => {
+  it.each([
+    ['Int8Array y', { x: 1, y: new Int8Array(32).fill(-85) }],
+    ['signed list y', { x: 1, y: Array(32).fill(-85) }],
+    ['Buffer shape with extra key', { x: 1, y: { type: 'Buffer', data: Array(32).fill(171), k: 1 } }],
+    ['uppercase X/Y', { X: 1, Y: Y }],
+    ['x invalid, X valid', { x: 'junk', X: 1, y: Y }],
+    ['y benign, Y share', { x: 1, y: '10', Y: Y }],
+    ['Int8Array in a JSON string', { blob: JSON.stringify({ X: 1, Y: new Int8Array(32).fill(-85) }) }],
+  ])('refuses %s', (_n, meta) => {
+    expect(() => assertNoKeyShareMaterial({ a: meta })).toThrow();
+  });
+  it.each([
+    ['short Int8Array', { x: 1, y: new Int8Array(15) }],
+    ['values below -128', { x: 1, y: Array(32).fill(-129) }],
+    ['uppercase coordinates', { X: 1, Y: '10' }],
+  ])('accepts %s', (_n, meta) => {
+    expect(() => assertNoKeyShareMaterial({ a: meta })).not.toThrow();
   });
 });

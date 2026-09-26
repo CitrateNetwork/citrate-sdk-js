@@ -29,7 +29,8 @@ function isShareX(x: unknown): boolean {
 }
 
 function isByteInt(v: unknown): boolean {
-  return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 255;
+  // Signed (Int8Array) or unsigned byte values.
+  return typeof v === 'number' && Number.isInteger(v) && v >= -128 && v <= 255;
 }
 
 /**
@@ -43,7 +44,7 @@ function bytesLikeLength(y: unknown): number {
     // Arrays are covered by the index-keyed branch (their keys are "0".."n-1").
     const o = y as Record<string, unknown>;
     const keys = Object.keys(o);
-    if (keys.length === 2 && o['type'] === 'Buffer' && Array.isArray(o['data'])) return bytesLikeLength(o['data']);
+    if (o['type'] === 'Buffer' && Array.isArray(o['data'])) return bytesLikeLength(o['data']);
     if (keys.length > 0 && keys.every((k, i) => k === String(i)) && keys.every((k) => isByteInt(o[k]))) return keys.length;
   }
   return 0;
@@ -51,7 +52,7 @@ function bytesLikeLength(y: unknown): number {
 
 /**
  * True if a valid JSON text contains an object with a repeated key. JSON.parse
- * keeps the last value, so a duplicate can hide an earlier one from the guard.
+ * keeps the last value, so duplicate keys are refused rather than resolved.
  */
 export function hasDuplicateJsonKeys(text: string): boolean {
   const stack: Array<{ keys: Set<string> | null; expectKey: boolean }> = [];
@@ -105,10 +106,13 @@ export function assertPayloadHasNoKeyShareMaterial(wire: string): void {
  * holder-wrapped share record. Short or coordinate-like values are not shares.
  */
 function looksLikeShare(o: Record<string, unknown>): boolean {
-  const y = o['y'];
-  if ('x' in o && isShareX(o['x'])) {
-    if (bytesLikeLength(y) >= MIN_SHARE_BYTES) return true;
-    if (typeof y === 'string' && shareYLike(y)) return true;
+  const xs = ['x', 'X'].filter((k) => k in o).map((k) => o[k]);
+  const ys = ['y', 'Y'].filter((k) => k in o).map((k) => o[k]);
+  if (xs.some(isShareX)) {
+    for (const y of ys) {
+      if (bytesLikeLength(y) >= MIN_SHARE_BYTES) return true;
+      if (typeof y === 'string' && shareYLike(y)) return true;
+    }
   }
   return 'envelope' in o && ('holderPublicKey' in o || 'holder_public_key' in o);
 }
