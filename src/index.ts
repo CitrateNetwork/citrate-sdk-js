@@ -48,3 +48,5 @@ export * as gateway from './gateway/client';
 // Memory — typed client for a citrate-memories gateway ("git for agents"):
 // OIDC REST (recall/search/neighbors/verify/review/assert/layout) + BYOM MCP.
 export * as memory from './memory/client';
+// Compute refund claims — InferenceRouter / ComputeMarketplace / ComputePoolTraining.
+export * as compute from './compute';
