@@ -4,24 +4,26 @@
  * deployed addresses ({ InferenceRouter, ComputeMarketplace,
  * ComputePoolTraining }); CITRATE_R2_ANVIL_RPC defaults to 127.0.0.1:8599.
  *
- * Uses anvil default accounts 5 (provider) and 6 (requester) only.
+ * Uses anvil default accounts 5 (provider) and 6 (requester) only, through
+ * anvil's unlocked-account signing (eth_sendTransaction); no keys in the test.
  */
 import { readFileSync } from 'node:fs';
-import { JsonRpcProvider, Wallet, Contract, NonceManager, parseEther, keccak256, toUtf8Bytes } from 'ethers';
+import { JsonRpcProvider, JsonRpcSigner, Contract, parseEther, keccak256, toUtf8Bytes } from 'ethers';
 import * as sdk from '../../src';
 
 const ADDRS = process.env.CITRATE_R2_ANVIL_ADDRS;
 const RPC = process.env.CITRATE_R2_ANVIL_RPC ?? 'http://127.0.0.1:8599';
-const KEY5 = '0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba';
-const KEY6 = '0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e';
+// anvil default accounts #5 and #6 (public addresses; anvil holds them unlocked).
+const ACCT5 = '0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc';
+const ACCT6 = '0x976EA74026E726554dB657fA54763abd0C3a0aa9';
 
 const maybe = ADDRS ? describe : describe.skip;
 
 maybe('compute refund claims on anvil (chain main)', () => {
   const addrs = ADDRS ? JSON.parse(readFileSync(ADDRS, 'utf8')) : {};
   const provider = new JsonRpcProvider(RPC);
-  const providerKey = new NonceManager(new Wallet(KEY5, provider));
-  const requester = new NonceManager(new Wallet(KEY6, provider));
+  const providerKey = new JsonRpcSigner(provider, ACCT5);
+  const requester = new JsonRpcSigner(provider, ACCT6);
   const model = keccak256(toUtf8Bytes('r2-sdk-js-refund-model'));
   const refunds = () =>
     new sdk.compute.ComputeRefunds(requester, {
