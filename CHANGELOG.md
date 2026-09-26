@@ -12,6 +12,10 @@ release may carry breaking changes when a security fix requires them.
   those exact bytes (duplicate object keys are refused), and sends the same
   bytes.
 - The key-share guard recognises byte values and their JSON renderings.
+- The key-share guard also accepts signed byte values (Int8Array, -128..255),
+  matches the Buffer JSON shape whatever other keys are present, and treats
+  uppercase `X`/`Y` like `x`/`y`. It is a safety net against accidental
+  inclusion; the SDK never places key shares in metadata itself.
 
 ### Tests
 

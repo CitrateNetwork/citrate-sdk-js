@@ -96,7 +96,7 @@ console.log(result.outputData, result.txHash, result.gasUsed);
 
 **Encryption fails closed.** `encrypted: true` without a configured key refuses to upload rather than falling back to plaintext. Encrypted inference also requires `recipientPublicKey`.
 
-**Key sharing stays off-chain.** With `encryptionConfig.thresholdShares > 0` you must pass `shareHolderPublicKeys` (one distinct public key per share). Each share is wrapped to its holder and returned as `deployment.keyShareEnvelopes`; deliver those to the holders off-chain. Holders open theirs with `keyManager.unwrapKeyShare(envelope, ownerPublicKey)` and rebuild the key with `reconstructKeyFromShares(shares, threshold)`. Shares are never written to the deploy transaction (0.2.2 and earlier did that; see CHANGELOG).
+**Key sharing stays off-chain.** With `encryptionConfig.thresholdShares > 0` you must pass `shareHolderPublicKeys` (one distinct public key per share). Each share is wrapped to its holder and returned as `deployment.keyShareEnvelopes`; deliver those to the holders off-chain. Holders open theirs with `keyManager.unwrapKeyShare(envelope, ownerPublicKey)` and rebuild the key with `reconstructKeyFromShares(shares, threshold)`. Shares are never written to the deploy transaction (0.2.2 and earlier did that; see CHANGELOG). The key-share check on caller-supplied metadata is a safety net against accidental inclusion, not a guarantee against deliberately re-encoded data; the SDK never places key shares in metadata itself.
 
 ### Streaming inference and events
 
