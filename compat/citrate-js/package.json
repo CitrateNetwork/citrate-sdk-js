@@ -1,6 +1,6 @@
 {
   "name": "@citratelabs/citrate-js",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "DEPRECATED. Renamed to @citratelabs/sdk. This package re-exports it for one migration cycle.",
   "keywords": [
     "citrate",
@@ -34,7 +34,7 @@
     "README.md"
   ],
   "dependencies": {
-    "@citratelabs/sdk": "0.2.3"
+    "@citratelabs/sdk": "0.2.4"
   },
   "publishConfig": {
     "access": "public",

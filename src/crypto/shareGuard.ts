@@ -28,15 +28,91 @@ function isShareX(x: unknown): boolean {
   return typeof x === 'string' && /^[0-9]{1,3}$/.test(x) && Number(x) >= 1 && Number(x) <= 255;
 }
 
+function isByteInt(v: unknown): boolean {
+  // Signed (Int8Array) or unsigned byte values.
+  return typeof v === 'number' && Number.isInteger(v) && v >= -128 && v <= 255;
+}
+
+/**
+ * Length of `y` if it is bytes or a JSON rendering of bytes (an integer
+ * array, the `{type: 'Buffer', data: [...]}` shape, or an object keyed
+ * "0".."n-1" with byte values); otherwise 0.
+ */
+function bytesLikeLength(y: unknown): number {
+  if (y instanceof Uint8Array) return y.length;
+  if (y !== null && typeof y === 'object') {
+    // Arrays are covered by the index-keyed branch (their keys are "0".."n-1").
+    const o = y as Record<string, unknown>;
+    const keys = Object.keys(o);
+    if (o['type'] === 'Buffer' && Array.isArray(o['data'])) return bytesLikeLength(o['data']);
+    if (keys.length > 0 && keys.every((k, i) => k === String(i)) && keys.every((k) => isByteInt(o[k]))) return keys.length;
+  }
+  return 0;
+}
+
+/**
+ * True if a valid JSON text contains an object with a repeated key. JSON.parse
+ * keeps the last value, so duplicate keys are refused rather than resolved.
+ */
+export function hasDuplicateJsonKeys(text: string): boolean {
+  const stack: Array<{ keys: Set<string> | null; expectKey: boolean }> = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '{') stack.push({ keys: new Set(), expectKey: true });
+    else if (c === '[') stack.push({ keys: null, expectKey: false });
+    else if (c === '}' || c === ']') stack.pop();
+    else if (c === ',') {
+      const top = stack[stack.length - 1];
+      if (top && top.keys) top.expectKey = true;
+    } else if (c === ':') {
+      const top = stack[stack.length - 1];
+      if (top) top.expectKey = false;
+    } else if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      const top = stack[stack.length - 1];
+      if (top && top.keys && top.expectKey) {
+        const key = JSON.parse(text.slice(i, j + 1)) as string;
+        if (top.keys.has(key)) return true;
+        top.keys.add(key);
+      }
+      i = j;
+    }
+  }
+  return false;
+}
+
+const DUP_MSG =
+  'deployModel: refusing to publish JSON with duplicate object keys; decoders disagree on which ' +
+  'value wins, so the content cannot be checked for key-share material (PBA-L4-001).';
+
+/**
+ * Guard a serialised JSON payload exactly as it will be sent: parse it
+ * (refusing duplicate keys) and run {@link assertNoKeyShareMaterial}.
+ */
+export function assertPayloadHasNoKeyShareMaterial(wire: string): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(wire);
+  } catch {
+    throw new CitrateError('deployModel: payload is not valid JSON; refusing to publish it.');
+  }
+  if (hasDuplicateJsonKeys(wire)) throw new CitrateError(DUP_MSG);
+  assertNoKeyShareMaterial(parsed);
+}
+
 /**
  * A raw Shamir share ({x in 1..255, y of share length as hex or bytes}) or a
  * holder-wrapped share record. Short or coordinate-like values are not shares.
  */
 function looksLikeShare(o: Record<string, unknown>): boolean {
-  const y = o['y'];
-  if ('x' in o && isShareX(o['x'])) {
-    if (y instanceof Uint8Array && y.length >= MIN_SHARE_BYTES) return true;
-    if (typeof y === 'string' && shareYLike(y)) return true;
+  const xs = ['x', 'X'].filter((k) => k in o).map((k) => o[k]);
+  const ys = ['y', 'Y'].filter((k) => k in o).map((k) => o[k]);
+  if (xs.some(isShareX)) {
+    for (const y of ys) {
+      if (bytesLikeLength(y) >= MIN_SHARE_BYTES) return true;
+      if (typeof y === 'string' && shareYLike(y)) return true;
+    }
   }
   return 'envelope' in o && ('holderPublicKey' in o || 'holder_public_key' in o);
 }
@@ -48,8 +124,8 @@ function looksLikeShare(o: Record<string, unknown>): boolean {
  */
 export function assertNoKeyShareMaterial(value: unknown, depth = 0): void {
   if (depth === 0 && value !== null && typeof value === 'object') {
-    // Check what is actually sent: JSON.stringify honours toJSON(), which a
-    // plain object walk does not see.
+    // Also check the serialised form. Callers that send data should also run
+    // assertPayloadHasNoKeyShareMaterial on the exact bytes they send.
     let wire: unknown;
     try {
       wire = JSON.parse(JSON.stringify(value));
@@ -71,6 +147,7 @@ function scan(value: unknown, depth: number): void {
     } catch {
       return;
     }
+    if (hasDuplicateJsonKeys(value)) throw new CitrateError(DUP_MSG);
     scan(decoded, depth + 1);
     return;
   }
