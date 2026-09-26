@@ -18,7 +18,7 @@ import { KeyManager } from '../../src/crypto/KeyManager';
 import { assertNoKeyShareMaterial } from '../../src/crypto/shareGuard';
 
 const VECTORS = path.join(__dirname, '../fixtures/share_guard_vectors.json');
-const VECTORS_SHA256 = '78d317f898cea7c2a808fc34e6566c144cc88709057175e29ac75867b4a1f8d5';
+const VECTORS_SHA256 = '8f336f469be58046e7984bf61756d513df9ba497aca8feb9fc8641e2c6a4b805';
 const Y = 'ab'.repeat(32);
 
 describe('shared vectors', () => {

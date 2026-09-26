@@ -6,7 +6,7 @@ import { ethers } from 'ethers';
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { CryptoManager } from '../crypto/CryptoManager';
 import { KeyManager } from '../crypto/KeyManager';
-import { assertNoKeyShareMaterial } from '../crypto/shareGuard';
+import { assertNoKeyShareMaterial, assertPayloadHasNoKeyShareMaterial } from '../crypto/shareGuard';
 import {
   ModelConfig,
   ModelDeployment,
@@ -280,12 +280,13 @@ export class CitrateClient {
       txData.metadata.encryption = encryptionMetadata;
     }
 
-    // PBA-L4-001: this calldata is public. Serialise ONCE, run the share
-    // guard on JSON.parse of exactly those bytes, and send those same bytes,
-    // so the guard judges what is sent rather than how live values (toJSON,
-    // getters, proxies) answer on a particular read.
+    // PBA-L4-001: this calldata is public. Guard the transaction data, then
+    // serialise once, guard those exact bytes (duplicate keys refused), and
+    // send the same bytes. The first check is defence in depth: the payload
+    // guard also recognises the JSON renderings of byte values.
+    assertNoKeyShareMaterial(txData);
     const wire = JSON.stringify(txData);
-    assertNoKeyShareMaterial(JSON.parse(wire));
+    assertPayloadHasNoKeyShareMaterial(wire);
 
     // Deploy to blockchain — canonical INFERENCE_DEPLOY precompile from
     // constants (audit -004: no hardcoded address literals in the client).

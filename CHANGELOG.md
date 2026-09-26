@@ -8,8 +8,10 @@ release may carry breaking changes when a security fix requires them.
 
 ### Changed
 
-- `deployModel` serialises the transaction payload once, runs the key-share
-  guard on the parsed form of those exact bytes, and sends the same bytes.
+- `deployModel` guards the transaction data, serialises it once, guards
+  those exact bytes (duplicate object keys are refused), and sends the same
+  bytes.
+- The key-share guard recognises byte values and their JSON renderings.
 
 ### Tests
 

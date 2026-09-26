@@ -11,7 +11,7 @@
  *      the guard (a canonical-only guard fails this).
  */
 import { CryptoManager } from '../../src/crypto/CryptoManager';
-import { assertNoKeyShareMaterial } from '../../src/crypto/shareGuard';
+import { assertNoKeyShareMaterial, assertPayloadHasNoKeyShareMaterial } from '../../src/crypto/shareGuard';
 
 const N = 40_000;
 const MIN = 16;
@@ -126,4 +126,36 @@ describe('guard vs parser differential', () => {
       expect(missed.slice(0, 3)).toEqual([]);
     },
   );
+});
+
+describe('y given as bytes-like values and their JSON shapes', () => {
+  const byteForms = (b: Buffer): unknown[] => [
+    new Uint8Array(b), Buffer.from(b), Array.from(b), { type: 'Buffer', data: Array.from(b) },
+    Object.fromEntries(Array.from(b).map((v, i) => [String(i), v])), JSON.parse(JSON.stringify(Buffer.from(b))),
+    JSON.parse(JSON.stringify(new Uint8Array(b))),
+  ];
+  it('refuses share-length bytes in every form', () => {
+    const r = rng(0xb17e5);
+    for (const n of [16, 17, 32, 64]) {
+      for (let i = 0; i < 50; i++) {
+        const b = Buffer.from(Array.from({ length: n }, () => Math.floor(r() * 256)));
+        for (const y of byteForms(b)) expect(() => assertNoKeyShareMaterial({ x: 1 + (n % 200), y })).toThrow();
+      }
+    }
+  });
+  it('accepts short bytes in every form', () => {
+    for (const n of [1, 8, 15]) {
+      const b = Buffer.alloc(n, 7);
+      for (const y of byteForms(b)) expect(() => assertNoKeyShareMaterial({ x: 1, y })).not.toThrow();
+    }
+  });
+  it('refuses duplicate keys in payloads and in JSON-string fields', () => {
+    const r = rng(0xd0b1e);
+    for (let i = 0; i < 200; i++) {
+      const hex = Buffer.from(Array.from({ length: 32 }, () => Math.floor(r() * 256))).toString('hex');
+      const t = r() < 0.5 ? `{"a": {"x": 1, "y": "${hex}", "y": "10"}}` : `{"a": {"x": 1, "x": "junk", "y": "${hex}"}}`;
+      expect(() => assertPayloadHasNoKeyShareMaterial(t)).toThrow();
+      expect(() => assertNoKeyShareMaterial({ blob: t })).toThrow();
+    }
+  });
 });
