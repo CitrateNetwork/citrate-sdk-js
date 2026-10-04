@@ -4,6 +4,29 @@ All notable changes to `@citratelabs/sdk` are documented here. This project
 follows [Semantic Versioning](https://semver.org/); while it is 0.x, a patch
 release may carry breaking changes when a security fix requires them.
 
+## [0.2.5] - 2026-10-04 — Post-reroll address book
+
+### Fixed
+
+- Address book regenerated from citrate-chain 0aab474b (fresh-keys reroll 2026-09-29); pre-reroll addresses removed.
+  `src/generated/federation-contract.json` re-synced with `npm run sync-contract` from
+  `citrate-federation/scripts/gen-contract.mjs` output. Membership now points at
+  `CitrateMemberSBT 0xa24aa35f…` / `MembershipStakeVault 0x4c0f8b27…`. The retired
+  cooperative entries (`PatronageLedger`, `ModelCooperative`, `CitrateCooperativeFactory`,
+  `CoopDeployer`, `CoopMembershipSBT`, `ContributionRewardPool`, `CoopGovernor`) are no
+  longer in the book and are no longer exported.
+- AA stack follows the book: `CitrateWalletFactory 0x24e2a41E…`, `CitratePaymaster 0x8E65bff9…`.
+  `predictWalletAddress` therefore returns post-reroll counterfactual addresses.
+
+### Tests
+
+- `identity_wallet.test.ts` re-pins the `predictAddress(0x4242…)` vector to `0x79A94592…`,
+  re-read from the live factory on rpc.citrate.ai on 2026-10-04.
+
+### Compatibility shim
+
+- `@citratelabs/citrate-js` 0.2.5 re-exports `@citratelabs/sdk` 0.2.5.
+
 ## [0.2.4] - 2026-09-25 — Hardening
 
 ### Changed
