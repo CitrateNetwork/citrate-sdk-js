@@ -10,19 +10,27 @@ npm install @citratelabs/sdk
 
 ## Quickstart
 
-```ts
-import { CitrateClient, DEFAULT_RPC_URLS, CHAIN_IDS } from '@citratelabs/sdk';
+Start with the checked-in read-only example. It requires no private key and refuses to continue
+if the RPC reports a different chain ID than the one you configured.
 
-const client = new CitrateClient({
-  rpcUrl: DEFAULT_RPC_URLS[CHAIN_IDS.TESTNET],   // ['https://rpc.citrate.ai']
-  privateKey: process.env.CITRATE_PRIVATE_KEY,     // optional; needed only to sign
-});
+First query `eth_chainId` on the endpoint. Local Citrate devnet normally returns `0x539` (`1337`);
+the public Citrate chain returns `0x9d0c` (`40204`). Then configure the decimal value you observed:
 
-console.log(await client.getChainId());            // 40204
-console.log(await client.getBalance());            // bigint, in wei (SALT has 18 decimals)
+```bash
+# macOS/Linux
+CITRATE_RPC_URL=http://localhost:8545 CITRATE_CHAIN_ID=1337 npm run example:read-only
 ```
 
-If `getChainId()` returns `40204`, you are connected.
+```powershell
+# Windows PowerShell
+$env:CITRATE_RPC_URL = 'http://localhost:8545'
+$env:CITRATE_CHAIN_ID = '1337'
+npm run example:read-only
+```
+
+Success prints one explicit result such as
+`Connected: network=local-devnet chainId=1337 mode=read-only`. See
+[`examples/read-only.cjs`](examples/read-only.cjs) for the complete executable flow.
 
 ## What the SDK covers
 
@@ -259,12 +267,12 @@ Read this section before generating code against this package.
 Run against a local Citrate stack instead of the public testnet:
 
 1. Start a devnet node from [citrate-chain](https://github.com/CitrateNetwork/citrate-chain). It serves JSON-RPC on `http://localhost:8545`.
-2. Point the client at it (loopback `http://` needs no opt-in):
+2. Verify its chain ID with the read-only example (loopback `http://` needs no opt-in):
    ```ts
    const client = new CitrateClient({
      rpcUrl: 'http://localhost:8545',
-     privateKey: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', // public Anvil test key #0
    });
+   console.log(await client.getChainId()); // standard local devnet: 1337
    ```
 3. Optionally run [citrate-inference-gateway](https://github.com/CitrateNetwork/citrate-inference-gateway) and pass `baseUrl: 'http://localhost:8080'` to `gateway.GatewayClient`.
 
