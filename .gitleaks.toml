@@ -1,0 +1,25 @@
+# gitleaks config for citrate-sdk-js. Picked up by .github/workflows/merge-gate.yml
+# (secret-scan). Keeps every default rule; the only change is one narrow allowlist.
+title = "citrate-sdk-js gitleaks config"
+
+[extend]
+useDefault = true
+
+# False positive: src/generated/precompiles.40204.ts (written by
+# scripts/sync-precompiles.mjs from citrate-chain) has rows like
+#   { name: 'TensorMatmulQ16', key: 'TENSOR_MATMUL_Q16', address: '0x...010a', ... }
+# and generic-api-key reads `key: '<CONSTANT_NAME>'` as a credential. The values are
+# public precompile identifiers (SCREAMING_SNAKE names), not secrets.
+#
+# Scoped three ways, all required (condition AND): only generic-api-key, only that
+# generated file, and only a matched value that is a bare SCREAMING_SNAKE identifier.
+# Any other value in that file, or any other rule hit there, still fails the scan.
+# A fingerprint entry in .gitleaksignore would not survive the squash merge (the
+# fingerprint embeds the commit SHA, and merge-gate rescans the squash commit on main).
+[[allowlists]]
+description = "generated precompile table: key field holds a public SCREAMING_SNAKE precompile name"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^src/generated/precompiles\.40204\.ts$''']
+regexTarget = "secret"
+regexes = ['''^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$''']
