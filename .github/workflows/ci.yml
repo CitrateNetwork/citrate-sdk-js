@@ -98,11 +98,11 @@ jobs:
   # fork pin (core/execution/src/agent_fork.rs) and the book's `precompiles` block
   # (contracts/addresses/40204.json). citrate-chain is public, so this needs no token.
   # CHAIN_REF pins the chain commit the generated file was built from; bump it with every
-  # `npm run sync-precompiles` (the agent precompile array is not on chain main yet).
+  # `npm run sync-precompiles` (2979a157 = chain main with the r1005 book, agent pin Some(0)).
   precompile-drift:
     runs-on: ubuntu-latest
     env:
-      CHAIN_REF: 86ef41cf9c8f92fd4914168efcd805983205337a
+      CHAIN_REF: 2979a1576d12dc75375ae30be5c37a2cdd866c87
     steps:
       - name: Checkout this repo
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

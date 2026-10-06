@@ -33,7 +33,7 @@ export interface ChainPrecompile {
 export const CHAIN_PRECOMPILE_SOURCE = {
   chainId: 40204,
   files: ['core/execution/src/precompiles/mod.rs', 'core/execution/src/agent_fork.rs', 'contracts/addresses/40204.json'],
-  agentForkChainPin: null,
+  agentForkChainPin: 0,
   agentForkActivationHeight: 0,
 } as const;
 

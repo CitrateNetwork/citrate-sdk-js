@@ -23,3 +23,19 @@ condition = "AND"
 paths = ['''^src/generated/precompiles\.40204\.ts$''']
 regexTarget = "secret"
 regexes = ['''^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$''']
+
+# False positive: src/generated/federation-contract.json (vendored by scripts/sync-contract.mjs
+# from citrate-federation, never hand-edited) maps contract names to public 40204 addresses, and
+# generic-api-key reads names such as "ModelAccessControl" or "WebAuthnP256Validator" as
+# credential labels. Every re-roll rewrites those lines, so the scan flags each book sync.
+#
+# Same three-way scoping (condition AND): only generic-api-key, only that vendored file, and only
+# a matched value that is exactly a 20-byte hex address (0x + 40 hex). A 32-byte private key
+# (64 hex) or any other value in that file, or any other rule hit there, still fails the scan.
+[[allowlists]]
+description = "vendored federation contract: values are public 20-byte contract addresses"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^src/generated/federation-contract\.json$''']
+regexTarget = "secret"
+regexes = ['''^0x[0-9a-fA-F]{40}$''']
