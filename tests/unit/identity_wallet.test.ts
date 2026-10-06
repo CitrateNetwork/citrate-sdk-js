@@ -2,10 +2,11 @@
  * DEVX-S1 / F2 — embedded smart-account wallet prediction.
  *
  * The pinned address is EARNED against ground truth: the on-chain
- * CitrateWalletFactory.predictAddress(0x4242…) returned 0x79A94592… on 2026-10-04
- * (rpc.citrate.ai, chain 40204, live factory 0x24e2a41E…), re-verified after the 2026-09-29
- * fresh-keys re-roll (citrate-chain 0aab474b) retired the previous factory 0x86486d1d… (which
- * had returned 0xfb43484C… on 2026-09-23; 0x1615Af12… on 2026-07-25 before that). The SDK computes locally
+ * CitrateWalletFactory.predictAddress(0x4242…) returned 0x6Ef76179… on 2026-10-06
+ * (rpc.citrate.ai, chain 40204, genesis 0x1dcfc490…, live factory 0x9Ac05AD6…), re-verified after
+ * the r1005 re-roll (citrate-chain 2979a157) retired the previous factory 0x24e2a41E… (which had
+ * returned 0x79A94592… on 2026-10-04; 0xfb43484C… on 2026-09-23 and 0x1615Af12… on 2026-07-25
+ * before that). The SDK computes locally
  * from the vendored federation-contract artifact's post-reroll factory + implementation, so the
  * value moves with the artifact, not with a hand-pinned constant. The local computation must
  * match the live factory byte-for-byte
@@ -25,9 +26,9 @@ const USER_ID_4242 = ('0x' + '42'.repeat(32)) as `0x${string}`;
 
 describe('predictWalletAddress — parity with the on-chain factory', () => {
   it('matches CitrateWalletFactory.predictAddress for the pinned userId', () => {
-    // On-chain ground truth (factory.predictAddress via rpc.citrate.ai) re-verified 2026-10-04,
-    // post the 2026-09-29 fresh-keys re-roll. Matches the live factory 0x24e2a41E…'s byte-for-byte.
-    expect(predictWalletAddress(USER_ID_4242)).toBe('0x79A945921aF5152b97D726E5B584640fb1f80d0c');
+    // On-chain ground truth (factory.predictAddress via rpc.citrate.ai) re-verified 2026-10-06,
+    // post the r1005 re-roll. Matches the live factory 0x9Ac05AD6…'s byte-for-byte.
+    expect(predictWalletAddress(USER_ID_4242)).toBe('0x6Ef7617980a1fe91D3449315E8D48f99A68Bb5eA');
   });
 
   it('uses the artifact factory + implementation by default (never a hand-pinned address)', () => {

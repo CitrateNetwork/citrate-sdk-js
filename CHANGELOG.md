@@ -4,24 +4,47 @@ All notable changes to `@citratelabs/sdk` are documented here. This project
 follows [Semantic Versioning](https://semver.org/); while it is 0.x, a patch
 release may carry breaking changes when a security fix requires them.
 
-## [0.2.5] - 2026-10-04 — Post-reroll address book
+## [0.2.5] - 2026-10-06 — r1005 address book and generated precompiles
 
 ### Fixed
 
-- Address book regenerated from citrate-chain 0aab474b (fresh-keys reroll 2026-09-29); pre-reroll addresses removed.
-  `src/generated/federation-contract.json` re-synced with `npm run sync-contract` from
-  `citrate-federation/scripts/gen-contract.mjs` output. Membership now points at
-  `CitrateMemberSBT 0xa24aa35f…` / `MembershipStakeVault 0x4c0f8b27…`. The retired
-  cooperative entries (`PatronageLedger`, `ModelCooperative`, `CitrateCooperativeFactory`,
-  `CoopDeployer`, `CoopMembershipSBT`, `ContributionRewardPool`, `CoopGovernor`) are no
-  longer in the book and are no longer exported.
-- AA stack follows the book: `CitrateWalletFactory 0x24e2a41E…`, `CitratePaymaster 0x8E65bff9…`.
+- Address book follows the r1005 re-roll of 40204 (genesis `0x1dcfc490…75f1`, citrate-chain
+  2979a157). `src/generated/federation-contract.json` re-synced with `npm run sync-contract`
+  from the `citrate-federation/scripts/gen-contract.mjs` output (federation #310); no hand
+  edits. Membership now points at `CitrateMemberSBT 0xf8aD11f6…` /
+  `MembershipStakeVault 0xA93F7f68…`. The retired cooperative entries (`PatronageLedger`,
+  `ModelCooperative`, `CitrateCooperativeFactory`, `CoopDeployer`, `CoopMembershipSBT`,
+  `ContributionRewardPool`, `CoopGovernor`) are no longer in the book and are no longer
+  exported.
+- AA stack follows the book: `CitrateWalletFactory 0x9Ac05AD6…`, `CitratePaymaster 0x804a8021…`.
   `predictWalletAddress` therefore returns post-reroll counterfactual addresses.
+- `CHAIN_PRECOMPILE_SOURCE.agentForkChainPin` is now `0`: citrate-chain pins the agent
+  precompiles to genesis on 40204. The CI `precompile-drift` job checks against 2979a157.
+
+### Added
+
+- `PRECOMPILE_ADDRESSES` is generated from citrate-chain by
+  `npm run sync-precompiles -- --chain <citrate-chain>` into
+  `src/generated/precompiles.40204.ts`; `npm run verify:precompiles` fails on
+  drift and runs in CI (`precompile-drift`).
+- New keys for every chain precompile, including the agent precompiles active
+  from genesis on 40204: `LORA_APPLY` (0x0112), `LORA_MERGE` (0x0113),
+  `MEMORY_ANCHOR_VERIFY` (0x0121), `AGENT_OPS` (0x0122), plus
+  `FOLD_COMMD_VERIFY` (0x0130), the verify, Q16 compute, learning, Ed25519 and
+  x402 sets, and `MODEL_*` names for the hosted inference family.
+- `CHAIN_PRECOMPILES` / `CHAIN_PRECOMPILE_SOURCE`: the generated table with
+  group, bridged and activation flags.
+
+### Changed
+
+- Existing `PRECOMPILE_ADDRESSES` keys and addresses are unchanged.
+  `INFERENCE_VERIFY` (0x0104) is marked deprecated: the chain retired that
+  address; use `INFERENCE_PROOF_VERIFY` (0x0108).
 
 ### Tests
 
-- `identity_wallet.test.ts` re-pins the `predictAddress(0x4242…)` vector to `0x79A94592…`,
-  re-read from the live factory on rpc.citrate.ai on 2026-10-04.
+- `identity_wallet.test.ts` re-pins the `predictAddress(0x4242…)` vector to `0x6Ef76179…`,
+  re-read from the live factory on rpc.citrate.ai on 2026-10-06.
 
 ### Compatibility shim
 

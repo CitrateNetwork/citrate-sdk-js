@@ -92,3 +92,35 @@ jobs:
       - name: Contract-artifact drift gate (blocking)
         if: env.FED_TOKEN != ''
         run: cd citrate-sdk-js && npm run verify:contract
+
+  # Precompile drift gate: src/generated/precompiles.40204.ts (and the README precompile table)
+  # must match citrate-chain's precompile arrays (core/execution/src/precompiles/mod.rs), the agent
+  # fork pin (core/execution/src/agent_fork.rs) and the book's `precompiles` block
+  # (contracts/addresses/40204.json). citrate-chain is public, so this needs no token.
+  # CHAIN_REF pins the chain commit the generated file was built from; bump it with every
+  # `npm run sync-precompiles` (2979a157 = chain main with the r1005 book, agent pin Some(0)).
+  precompile-drift:
+    runs-on: ubuntu-latest
+    env:
+      CHAIN_REF: 2979a1576d12dc75375ae30be5c37a2cdd866c87
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: citrate-sdk-js
+      - name: Checkout citrate-chain precompile sources (sparse)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: CitrateNetwork/citrate-chain
+          ref: ${{ env.CHAIN_REF }}
+          path: citrate-chain
+          sparse-checkout: |
+            core/execution/src/precompiles/mod.rs
+            core/execution/src/agent_fork.rs
+            contracts/addresses/40204.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+      - name: Precompile drift gate (blocking)
+        run: cd citrate-sdk-js && npm run verify:precompiles -- --chain ../citrate-chain

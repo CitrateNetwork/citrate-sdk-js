@@ -8,6 +8,11 @@
  * add them to the artifact and re-sync (`npm run sync-contract`).
  */
 import { FEDERATION_CONTRACT } from '../generated/contract';
+import {
+  CHAIN_PRECOMPILES,
+  CHAIN_PRECOMPILE_ADDRESSES,
+  CHAIN_PRECOMPILE_SOURCE,
+} from '../generated/precompiles.40204';
 
 // Single source of truth for the package version. `index.ts` re-exports this as
 // `VERSION` and the HTTP User-Agent is derived from it (SJS-B-H03: the axios UA
@@ -51,29 +56,41 @@ export const MEMBERSHIP_ADDRESSES = FEDERATION_CONTRACT.membership;
 // Named application contracts (ModelRegistry, ComputePool, …) — from the artifact.
 export const CONTRACT_ADDRESSES = FEDERATION_CONTRACT.contracts;
 
-// Canonical precompile table, sourced from the federation artifact (the authoritative set).
-// Prefer this over the legacy PRECOMPILE_ADDRESSES below. The legacy map predates the artifact
-// and carries entries the canonical table does NOT contain — notably INFERENCE_VERIFY (0x…0104),
-// which is absent on-chain (the canonical proof-verify precompile is InferenceProofVerify 0x…0108),
-// and the 0x1000-range state precompiles. See tests/unit/precompile_reconciliation.test.ts for the
-// exact reconciliation; correcting the legacy map is a chain-team-gated change (DEVX-S3).
+// Precompile table carried in the federation artifact (book names, e.g. `InferenceProofVerify`).
+// It mirrors the `precompiles` block of citrate-chain's 40204.json, which does not list every
+// bridged precompile; PRECOMPILE_ADDRESSES below is the complete set.
 export const PRECOMPILES = FEDERATION_CONTRACT.precompiles;
 
-// State-changing precompile addresses (canonical — match executor.rs)
-// These are the addresses the executor actually dispatches to for on-chain model state
+// Every chain precompile, generated from citrate-chain by `npm run sync-precompiles`
+// (core/execution/src/precompiles/mod.rs PURE_PRECOMPILE_ADDRESSES + AGENT_FORK_PRECOMPILE_ADDRESSES,
+// plus the 40204.json `precompiles` block for the hosted inference family). Each entry carries its
+// group ('hosted' | 'pure' | 'agent'), whether it is bridged into the EVM, and whether it is active
+// from genesis. `npm run verify:precompiles` fails if this drifts from the chain.
+export { CHAIN_PRECOMPILES, CHAIN_PRECOMPILE_SOURCE };
+export type { ChainPrecompile, PrecompileGroup } from '../generated/precompiles.40204';
+
+// Precompile addresses by key. Generated keys (e.g. INFERENCE_PROOF_VERIFY, LORA_APPLY, AGENT_OPS)
+// come straight from CHAIN_PRECOMPILE_ADDRESSES; the keys spelled out below predate the generator
+// and are kept so existing callers keep working.
 export const PRECOMPILE_ADDRESSES = {
-  // Canonical state precompiles (executor.rs model_precompile_address / artifact / governance)
+  ...CHAIN_PRECOMPILE_ADDRESSES,
+  // Node state precompiles dispatched by executor.rs (model / artifact / governance). They sit
+  // outside the EVM-bridged arrays and the book's precompiles block, so they are kept by hand.
   MODEL: '0x0000000000000000000000000000000000001000',
   ARTIFACT: '0x0000000000000000000000000000000000001002',
   GOVERNANCE: '0x0000000000000000000000000000000000001003',
-  // Runtime AI inference precompiles (inference.rs, 0x0100-0x0106)
-  INFERENCE_DEPLOY: '0x0000000000000000000000000000000000000100',
-  INFERENCE_RUN: '0x0000000000000000000000000000000000000101',
-  INFERENCE_BATCH: '0x0000000000000000000000000000000000000102',
-  INFERENCE_METADATA: '0x0000000000000000000000000000000000000103',
+  // Hosted AI inference family (0x0100-0x0106), legacy names for the generated MODEL_* keys.
+  INFERENCE_DEPLOY: CHAIN_PRECOMPILE_ADDRESSES.MODEL_DEPLOY,
+  INFERENCE_RUN: CHAIN_PRECOMPILE_ADDRESSES.MODEL_INFERENCE,
+  INFERENCE_BATCH: CHAIN_PRECOMPILE_ADDRESSES.BATCH_INFERENCE,
+  INFERENCE_METADATA: CHAIN_PRECOMPILE_ADDRESSES.MODEL_METADATA,
+  INFERENCE_BENCHMARK: CHAIN_PRECOMPILE_ADDRESSES.MODEL_BENCHMARK,
+  INFERENCE_ENCRYPT: CHAIN_PRECOMPILE_ADDRESSES.MODEL_ENCRYPTION,
+  /**
+   * @deprecated 0x0104 is the retired proof-verification address; the chain always rejects
+   * calls to it. Use INFERENCE_PROOF_VERIFY (0x0108).
+   */
   INFERENCE_VERIFY: '0x0000000000000000000000000000000000000104',
-  INFERENCE_BENCHMARK: '0x0000000000000000000000000000000000000105',
-  INFERENCE_ENCRYPT: '0x0000000000000000000000000000000000000106',
 } as const;
 
 // Gas limits

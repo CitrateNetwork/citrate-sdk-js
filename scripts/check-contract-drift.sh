@@ -4,7 +4,9 @@
 # Verifies this SDK's vendored src/generated/federation-contract.json still
 # matches the canonical federation intermediate
 # (citrate-federation/contract/federation-contract.json), which is itself gated
-# fresh against citrate-chain by federation's contract-artifact-drift workflow.
+# fresh against citrate-chain by federation's contract-artifact-drift workflow,
+# and that src/generated/precompiles.40204.ts matches citrate-chain's precompile
+# arrays (scripts/sync-precompiles.mjs).
 # Run before pushing/merging and after every re-roll while org CI is down.
 #
 #   bash scripts/check-contract-drift.sh
@@ -22,3 +24,8 @@ if [ ! -f "$CANONICAL" ]; then
 fi
 
 npm run --silent verify:contract
+
+# Precompile side: the generated precompile table must match the sibling citrate-chain checkout
+# (pass CITRATE_CHAIN_DIR to point at another checkout, e.g. the reroll branch).
+CHAIN_DIR="${CITRATE_CHAIN_DIR:-$HERE/../citrate-chain}"
+npm run --silent verify:precompiles -- --chain "$CHAIN_DIR"
