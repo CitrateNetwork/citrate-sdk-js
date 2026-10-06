@@ -4,6 +4,28 @@ All notable changes to `@citratelabs/sdk` are documented here. This project
 follows [Semantic Versioning](https://semver.org/); while it is 0.x, a patch
 release may carry breaking changes when a security fix requires them.
 
+## [Unreleased]
+
+### Added
+
+- `PRECOMPILE_ADDRESSES` is generated from citrate-chain by
+  `npm run sync-precompiles -- --chain <citrate-chain>` into
+  `src/generated/precompiles.40204.ts`; `npm run verify:precompiles` fails on
+  drift and runs in CI (`precompile-drift`).
+- New keys for every chain precompile, including the agent precompiles active
+  from genesis on 40204: `LORA_APPLY` (0x0112), `LORA_MERGE` (0x0113),
+  `MEMORY_ANCHOR_VERIFY` (0x0121), `AGENT_OPS` (0x0122), plus
+  `FOLD_COMMD_VERIFY` (0x0130), the verify, Q16 compute, learning, Ed25519 and
+  x402 sets, and `MODEL_*` names for the hosted inference family.
+- `CHAIN_PRECOMPILES` / `CHAIN_PRECOMPILE_SOURCE`: the generated table with
+  group, bridged and activation flags.
+
+### Changed
+
+- Existing `PRECOMPILE_ADDRESSES` keys and addresses are unchanged.
+  `INFERENCE_VERIFY` (0x0104) is marked deprecated: the chain retired that
+  address; use `INFERENCE_PROOF_VERIFY` (0x0108).
+
 ## [0.2.4] - 2026-09-25 — Hardening
 
 ### Changed
