@@ -27,6 +27,7 @@
     "build:publish": "tsup",
     "build:types": "tsc --emitDeclarationOnly --declaration",
     "dev": "tsup --watch",
+    "example:read-only": "node examples/read-only.cjs",
     "test": "jest --passWithNoTests --testPathIgnorePatterns=tests/integration",
     "test:unit": "jest --passWithNoTests --testPathIgnorePatterns=tests/integration",
     "test:integration": "node scripts/run-integration-tests.cjs",
