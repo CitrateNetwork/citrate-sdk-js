@@ -37,6 +37,8 @@
     "format": "prettier --write src/**/*.ts",
     "sync-contract": "node scripts/sync-contract.mjs",
     "verify:contract": "node scripts/sync-contract.mjs --check",
+    "sync-precompiles": "node scripts/sync-precompiles.mjs",
+    "verify:precompiles": "node scripts/sync-precompiles.mjs --check",
     "verify:publish-names": "node scripts/check-publish-names.mjs",
     "prepublishOnly": "npm run verify:publish-names && npm run build:publish"
   },

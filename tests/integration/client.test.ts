@@ -11,7 +11,7 @@
 
 import { ethers } from 'ethers';
 import { CitrateClient, CitrateClientConfig } from '../../src/client/CitrateClient';
-import { CitrateError } from '../../src/errors/CitrateError';
+import { CitrateError, ValidationError } from '../../src/errors/CitrateError';
 
 // ============================================================================
 // Test Configuration
@@ -344,12 +344,10 @@ describe('CitrateClient Configuration', () => {
 // ============================================================================
 
 describe('CitrateClient Error Handling', () => {
-  it('throws CitrateError for network failures', async () => {
-    const badClient = new CitrateClient({
+  it('rejects invalid RPC URLs during client construction', () => {
+    expect(() => new CitrateClient({
       rpcUrl: 'http://localhost:99999',
-    });
-
-    await expect(badClient.getChainId()).rejects.toThrow();
+    })).toThrow(ValidationError);
   });
 
   it('handles invalid RPC method', async () => {
@@ -546,7 +544,7 @@ describe('CitrateClient Wallet Operations', () => {
     });
 
     await expect(readOnlyClient.purchaseModelAccess('test_model_id', 1000n)).rejects.toThrow(
-      'Wallet required'
+      'is disabled (fail-closed)'
     );
   });
 });
