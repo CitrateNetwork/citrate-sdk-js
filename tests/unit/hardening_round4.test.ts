@@ -18,12 +18,18 @@ import { KeyManager } from '../../src/crypto/KeyManager';
 import { assertNoKeyShareMaterial } from '../../src/crypto/shareGuard';
 
 const VECTORS = path.join(__dirname, '../fixtures/share_guard_vectors.json');
+const GIT_ATTRIBUTES = path.join(__dirname, '../../.gitattributes');
 const VECTORS_SHA256 = '674d35d72f4fca132e59e325efec3a61fcb4cbe7d6cfc5afd85d1821afcf884f';
 const Y = 'ab'.repeat(32);
 
 describe('shared vectors', () => {
   it('the vector file is the shared copy', () => {
     expect(createHash('sha256').update(fs.readFileSync(VECTORS)).digest('hex')).toBe(VECTORS_SHA256);
+  });
+  it('the canonical fixture is checked out with LF bytes on every platform', () => {
+    const attributes = fs.readFileSync(GIT_ATTRIBUTES, 'utf8').split(/\r?\n/);
+    expect(attributes).toContain('tests/fixtures/share_guard_vectors.json text eol=lf');
+    expect(fs.readFileSync(VECTORS).includes(0x0d)).toBe(false);
   });
   const vecs: Array<{ name: string; refuse: boolean; meta: unknown }> = JSON.parse(fs.readFileSync(VECTORS, 'utf8')).vectors;
   it.each(vecs.map((v) => [v.name, v] as const))('%s', (_name, v) => {
