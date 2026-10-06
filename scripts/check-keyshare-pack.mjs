@@ -19,10 +19,12 @@ import { mkdtempSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import npmInvocationModule from './npm-invocation.cjs';
 
 const require = createRequire(import.meta.url);
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { revealsKey } = require('./keyshare-leak-tripwire.js');
+const { resolveNpmInvocation } = npmInvocationModule;
 
 function fail(msg) {
   console.error(`PBA-L4-001 pack tripwire FAILED: ${msg}`);
@@ -33,7 +35,12 @@ let tarball = process.argv[2];
 const tmp = mkdtempSync(path.join(repo, '.pack-check-'));
 try {
   if (!tarball) {
-    const out = execFileSync('npm', ['pack', '--silent', '--pack-destination', tmp], { cwd: repo, encoding: 'utf8' });
+    const npm = resolveNpmInvocation();
+    const out = execFileSync(
+      npm.command,
+      [...npm.args, 'pack', '--silent', '--pack-destination', tmp],
+      { cwd: repo, encoding: 'utf8' },
+    );
     tarball = path.join(tmp, out.trim().split('\n').pop());
   }
   if (!existsSync(tarball)) fail(`tarball not found: ${tarball}`);
