@@ -73,3 +73,19 @@ describe('WebSocketClient.startStreamingInference stream IDs', () => {
     expect(hex).toMatch(/^[0-9a-f]{32,}$/);
   });
 });
+
+describe('WebSocketClient stream IDs without Web Crypto', () => {
+  it('refuses to start a stream rather than fall back to a weak source', async () => {
+    const { client, sent } = harness();
+    const saved = (globalThis as { crypto?: unknown }).crypto;
+    Object.defineProperty(globalThis, 'crypto', { value: {}, configurable: true, writable: true });
+    try {
+      await expect(client.startStreamingInference({ modelId: 'm', inputData: {} })).rejects.toThrow(
+        /getRandomValues/,
+      );
+    } finally {
+      Object.defineProperty(globalThis, 'crypto', { value: saved, configurable: true, writable: true });
+    }
+    expect(sent).toHaveLength(0);
+  });
+});
