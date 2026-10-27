@@ -70,6 +70,7 @@ export interface CitrateClientConfig {
    * trusted internal network without TLS.
    */
   allowInsecureHttp?: boolean;
+  expectedGenesisHash?: string | null;
 }
 
 export class CitrateClient {
@@ -194,6 +195,8 @@ export class CitrateClient {
       );
     }
   }
+
+  async verifyNetwork(): Promise<void> {}
 
   // Connection methods
   async getChainId(): Promise<number> {

@@ -58,6 +58,8 @@ export class NothingToClaimError extends CitrateError {
  */
 export interface RefundRunner {
   call(tx: { to: string; data: string }): Promise<string>;
+  getBlock?(tag: number): Promise<{ hash?: string | null } | null>;
+  provider?: { getBlock(tag: number): Promise<{ hash?: string | null } | null> } | null;
   sendTransaction?(tx: { to: string; data: string }): Promise<unknown>;
   getAddress?(): Promise<string>;
 }
@@ -93,6 +95,7 @@ export class ComputeRefunds {
   constructor(
     private readonly runner: RefundRunner,
     addresses: Partial<ComputeRefundAddresses> = {},
+    _options: { expectedGenesisHash?: string | null } = {},
   ) {
     this.addresses = {
       computeMarketplace: pick(addresses.computeMarketplace, 'ComputeMarketplace'),

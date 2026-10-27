@@ -15,7 +15,7 @@ export type Hex = `0x${string}`;
 
 export interface FederationContract {
   schemaVersion: number;
-  chain: { chainId: number; chainName: string; rpcUrl: string; explorerUrl: string; wsUrl: string };
+  chain: { chainId: number; chainName: string; rpcUrl: string; explorerUrl: string; wsUrl: string; genesisHash: Hex };
   contracts: Record<string, Hex>;
   aaStack: {
     EntryPoint: Hex;

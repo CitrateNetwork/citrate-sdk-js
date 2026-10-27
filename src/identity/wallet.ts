@@ -79,6 +79,7 @@ export interface PredictOptions {
 export interface VerifyOnChainOptions extends PredictOptions {
   /** Chain the provider must report (defaults to the federation artifact chain, 40204). */
   chainId?: number;
+  expectedGenesisHash?: string | null;
 }
 
 /**
