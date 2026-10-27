@@ -27,13 +27,14 @@ export * from './errors/CitrateError';
 // Utils
 export * from './utils/constants';
 export * from './utils/validation';
+export * from './utils/network';
 
 // React hooks (only if React is installed)
 // Import separately: import { useCitrateClient } from '@citratelabs/sdk/react/hooks'
 // export * from './react/hooks'; // Commented out to avoid requiring React as dependency
 
 // Version (kept in sync with package.json)
-export const VERSION = '0.2.5';
+export const VERSION = '0.3.0';
 // Embedded wallet (ERC-4337 v0.7 / Kernel v3) — EW-S1 WP-7
 export * as aa from './aa';
 

@@ -79,7 +79,7 @@ function deployReceiptLogs(): Array<{ topics: string[]; data: string }> {
 }
 
 function newClient(): CitrateClient {
-  return new CitrateClient({ rpcUrl: RPC_URL, privateKey: SENDER_KEY });
+  return new CitrateClient({ rpcUrl: RPC_URL, expectedGenesisHash: null, privateKey: SENDER_KEY });
 }
 
 const validModelConfig: ModelConfig = {
@@ -176,7 +176,7 @@ describe('CITRATE_SDK_JS-2026-05-31-003 — validation layer must be wired, not 
 
   it('constructor rejects a malformed private key with ValidationError', () => {
     expect(
-      () => new CitrateClient({ rpcUrl: RPC_URL, privateKey: '0x12345' })
+      () => new CitrateClient({ rpcUrl: RPC_URL, expectedGenesisHash: null, privateKey: '0x12345' })
     ).toThrow(ValidationError);
   });
 

@@ -17,6 +17,7 @@
 import { Interface } from 'ethers';
 import { CitrateError } from '../errors/CitrateError';
 import { CONTRACT_ADDRESSES } from '../utils/constants';
+import { assertGenesis, resolveExpectedGenesis, WrongNetworkError, type GenesisSource } from '../utils/network';
 
 const ABI = new Interface([
   'function claimRefund()',
@@ -58,8 +59,10 @@ export class NothingToClaimError extends CitrateError {
  */
 export interface RefundRunner {
   call(tx: { to: string; data: string }): Promise<string>;
+  /** Block lookup (an ethers Provider); used to check block 0 before book addresses are used. */
   getBlock?(tag: number): Promise<{ hash?: string | null } | null>;
-  provider?: { getBlock(tag: number): Promise<{ hash?: string | null } | null> } | null;
+  /** An ethers Signer's provider; used for the same check when the runner is a Signer. */
+  provider?: GenesisSource | null;
   sendTransaction?(tx: { to: string; data: string }): Promise<unknown>;
   getAddress?(): Promise<string>;
 }
@@ -89,22 +92,69 @@ function pick(given: string | undefined, name: string): string {
   return addr;
 }
 
+export interface ComputeRefundOptions {
+  /**
+   * Block-0 hash the runner's chain must report. Defaults to the vendored book's genesis
+   * (`EXPECTED_GENESIS_HASH`) when any address comes from the book, and to no check when the
+   * caller supplies all three. `null` skips the check.
+   */
+  expectedGenesisHash?: string | null;
+}
+
 export class ComputeRefunds {
   readonly addresses: ComputeRefundAddresses;
+  private readonly expectedGenesis: string | null;
+  private networkCheck: Promise<void> | null = null;
 
   constructor(
     private readonly runner: RefundRunner,
     addresses: Partial<ComputeRefundAddresses> = {},
-    _options: { expectedGenesisHash?: string | null } = {},
+    options: ComputeRefundOptions = {},
   ) {
     this.addresses = {
       computeMarketplace: pick(addresses.computeMarketplace, 'ComputeMarketplace'),
       inferenceRouter: pick(addresses.inferenceRouter, 'InferenceRouter'),
       computePoolTraining: pick(addresses.computePoolTraining, 'ComputePoolTraining'),
     };
+    const usesBook =
+      addresses.computeMarketplace === undefined ||
+      addresses.inferenceRouter === undefined ||
+      addresses.computePoolTraining === undefined;
+    this.expectedGenesis =
+      options.expectedGenesisHash !== undefined || usesBook ? resolveExpectedGenesis(options.expectedGenesisHash) : null;
+  }
+
+  /** Check block 0 once (a failure is not cached) before any book address is used. */
+  private verifyNetwork(): Promise<void> {
+    const expected = this.expectedGenesis;
+    if (expected === null) return Promise.resolve();
+    if (!this.networkCheck) {
+      const source: GenesisSource | null =
+        typeof this.runner.getBlock === 'function'
+          ? { getBlock: (tag) => this.runner.getBlock!(tag) }
+          : this.runner.provider && typeof this.runner.provider.getBlock === 'function'
+            ? this.runner.provider
+            : null;
+      this.networkCheck = (
+        source
+          ? assertGenesis(source, expected)
+          : Promise.reject(
+              new WrongNetworkError(
+                'cannot verify the network: the runner exposes no getBlock or provider to read block 0. ' +
+                  'Pass an ethers Provider/Signer, all three addresses, or expectedGenesisHash: null.',
+                { expected },
+              ),
+            )
+      ).catch((err: unknown) => {
+        this.networkCheck = null;
+        throw err;
+      });
+    }
+    return this.networkCheck;
   }
 
   private async view(to: string, name: string, args: unknown[]): Promise<bigint> {
+    await this.verifyNetwork();
     const data = ABI.encodeFunctionData(name, args);
     const out = await this.runner.call({ to, data });
     const [v] = ABI.decodeFunctionResult(name, out);
@@ -134,6 +184,7 @@ export class ComputeRefunds {
     nothing: () => NothingToClaimError,
   ): Promise<unknown> {
     const s = this.signer(name);
+    await this.verifyNetwork();
     if ((await owed(await s.getAddress())) === 0n) throw nothing();
     return s.sendTransaction({ to, data: ABI.encodeFunctionData(name, args) });
   }

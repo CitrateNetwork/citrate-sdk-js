@@ -4,6 +4,65 @@ All notable changes to `@citratelabs/sdk` are documented here. This project
 follows [Semantic Versioning](https://semver.org/); while it is 0.x, a patch
 release may carry breaking changes when a security fix requires them.
 
+## [0.3.0] - 2026-10-27 — r1006 address book and a genesis guard
+
+Held for the r1006 public cutover: publish only after rpc.citrate.ai serves r1006.
+
+### Changed
+
+- Address book follows the r1006 network of 40204 (genesis block
+  `0xa3651a272fe411948cbb4cf7cca4cee44be4248d32ab4376cea7636821c6cdd4`). The book is citrate-chain
+  `contracts/addresses/r1006/40204.json` (final since a857443e; every contract is in block 0).
+  `src/generated/federation-contract.json` re-synced with `npm run sync-contract` from the
+  citrate-federation gen-contract output (branch `beta/fxsdk-r1006-contract`); no hand edits.
+  AA stack: `CitrateWalletFactory 0x6ee3b590…`, `CitratePaymaster 0x5a1e2d73…` (EntryPoint,
+  CitrateWallet and the validators keep their addresses). Membership: `CitrateMemberSBT
+  0x88316513…`, `MembershipStakeVault 0xd6632ea2…`. `predictWalletAddress` therefore returns
+  r1006 counterfactual addresses.
+- **Removed from `CONTRACT_ADDRESSES`** (not in r1006 block 0): `LiquidStakingPool`,
+  `CitAgentTimelock`, `AppRegistry`, `AuditBundleRegistry`, `CapabilityGrant`,
+  `ClassificationRegistry`, `ContradictionLedger`, `CrossOrgEnvelope`, `CrossOrgIndex`,
+  `DefensePrimeComplianceRegistry`, `DefensePrimeFLScopeIndex`, `EntityRegistry`,
+  `GovernanceProtocolFactory`, `GovernanceTemplateRegistry`, `MeetingRegistry`, `MoqRegistry`,
+  `MultiSigEnvelope`, `PartProvenanceRegistry`, `PolicyBinding`, `QuorumAnchorRegistry`,
+  `ReleaseManifestRegistry`, `RoleEscalation`, `RoleGrantTenantIndex`, `Sortition`,
+  `SponsorEvidenceRegistry`, `SupplierRegistry`, `TenantHierarchy`, `TinaWorkpaperRegistry`,
+  `TripwireRegistry`, `VoteAllowance`. Added: `GovernanceTimelock`, `GovernanceMultisig`,
+  `GuardianTimelock`, `GuardianMultisig`, `GuardianCanceller`, `FederatedRoundLedger`,
+  `PatronageLedger`, `TeamVesting_team_1`.
+- Precompile table regenerated against citrate-chain e4ed35d5 and the r1006 book (no address
+  changes); the CI `precompile-drift` job reads the r1006 book at that commit.
+
+### Added
+
+- Network guard. r1005 and r1006 share chain id 40204, so the chain id cannot tell them apart.
+  `CitrateClient` reads block 0 before it sends a transaction (`deployModel`, `inference`,
+  `batchInference`) and throws `WrongNetworkError` (code `WRONG_NETWORK`) unless its hash is
+  `EXPECTED_GENESIS_HASH`; `client.verifyNetwork()` runs the check up front.
+  `identity.verifyWalletAddressOnChain` and `compute.ComputeRefunds` run the same check before
+  they use a book address. `expectedGenesisHash` (client config / options) overrides the hash;
+  `null` skips the check for a local dev chain.
+- `scripts/sync-contract.mjs` and `scripts/check-contract-drift.sh` honour
+  `CITRATE_FEDERATION_DIR`, and the sync refuses an artifact without a 32-byte `genesisHash`.
+
+### Tests
+
+- `r1006_network_guard.test.ts` (18 tests): the r1006 book, no r1005 address, and the guard on
+  every path (wrong genesis, missing block 0, failure not cached, opt-out, override).
+- `identity_wallet.test.ts` pins the r1006 `predictAddress(0x4242…)` vector `0xEFf9CC17…`
+  (computed offline; the same formula reproduces r1005's live `0x6Ef76179…`, which stays pinned
+  as a formula check). Re-read it from the live factory after the cutover.
+- Offline client tests that stub `sendTransaction` pass `expectedGenesisHash: null` (no chain).
+
+### Docs
+
+- README: the r1006 book, the network guard, and "Tokenomics are not yet determined; see
+  docs.citrate.ai."
+
+### Compatibility shim
+
+- `@citratelabs/citrate-js` 0.3.0 re-exports `@citratelabs/sdk` 0.3.0.
+
 ## [0.2.5] - 2026-10-06 — r1005 address book and generated precompiles
 
 ### Fixed

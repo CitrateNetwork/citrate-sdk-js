@@ -49,7 +49,7 @@ interface Captured {
 }
 
 function clientWithCapture(): { client: CitrateClient; captured: Captured[]; send: jest.Mock } {
-  const client = new CitrateClient({ rpcUrl: 'http://127.0.0.1:8545', privateKey: OWNER_KEY });
+  const client = new CitrateClient({ rpcUrl: 'http://127.0.0.1:8545', expectedGenesisHash: null, privateKey: OWNER_KEY });
   const captured: Captured[] = [];
   const send = jest.fn(async (tx: Captured) => {
     captured.push({ data: tx.data });

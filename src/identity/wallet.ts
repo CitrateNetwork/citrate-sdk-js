@@ -18,6 +18,7 @@
 import { Contract, concat, getAddress, keccak256, toUtf8Bytes, type Provider } from 'ethers';
 
 import { AA_ADDRESSES } from '../utils/constants';
+import { assertGenesis, resolveExpectedGenesis } from '../utils/network';
 import { FEDERATION_CONTRACT, type Hex } from '../generated/contract';
 
 /** Solady minimal ERC-1967 clone initcode segments (implementation embedded at bytes 9..29). */
@@ -79,6 +80,11 @@ export interface PredictOptions {
 export interface VerifyOnChainOptions extends PredictOptions {
   /** Chain the provider must report (defaults to the federation artifact chain, 40204). */
   chainId?: number;
+  /**
+   * Block-0 hash the provider must report. When neither `factory` nor `chainId` is overridden
+   * (the vendored book is being verified), defaults to the book's genesis
+   * (`EXPECTED_GENESIS_HASH`); otherwise defaults to no check. `null` always skips it.
+   */
   expectedGenesisHash?: string | null;
 }
 
@@ -121,6 +127,14 @@ export async function verifyWalletAddressOnChain(
   const { chainId } = await provider.getNetwork();
   if (chainId !== expectedChain) {
     throw new WalletPredictionError(`provider is on chain ${chainId}, expected chain ${expectedChain} — refusing to verify`);
+  }
+  // Same chain id is not the same network (r1005 and r1006 are both 40204): verifying the
+  // book's factory also needs the book's genesis.
+  const usesBook = opts.factory === undefined && opts.chainId === undefined;
+  const expectedGenesis =
+    opts.expectedGenesisHash !== undefined || usesBook ? resolveExpectedGenesis(opts.expectedGenesisHash) : null;
+  if (expectedGenesis !== null) {
+    await assertGenesis(provider, expectedGenesis);
   }
   const code = await provider.getCode(factoryAddress);
   if (!code || code === '0x' || code === '0x0') {

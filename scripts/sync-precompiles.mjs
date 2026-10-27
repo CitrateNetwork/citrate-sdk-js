@@ -5,7 +5,7 @@
  * Sources (see scripts/lib/precompiles.cjs):
  *   <chain>/core/execution/src/precompiles/mod.rs   PURE_PRECOMPILE_ADDRESSES, AGENT_FORK_PRECOMPILE_ADDRESSES
  *   <chain>/core/execution/src/agent_fork.rs        AGENT_PRECOMPILES_PINS
- *   <chain>/contracts/addresses/40204.json          `precompiles` block
+ *   <chain>/contracts/addresses/r1006/40204.json    `precompiles` block
  *
  *   npm run sync-precompiles -- [--chain <dir>]       # rewrite the generated file + README table
  *   npm run verify:precompiles -- [--chain <dir>]     # non-zero if either is out of date
