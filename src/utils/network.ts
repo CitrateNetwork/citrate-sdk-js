@@ -58,19 +58,49 @@ export interface AssertGenesisOptions {
   timeoutMs?: number;
 }
 
+/** How deep FallbackProviders may nest before the shape is refused. */
+const MAX_PROVIDER_NESTING = 8;
+
+function unresolvable(why: string): WrongNetworkError {
+  return new WrongNetworkError(
+    `cannot resolve the RPC provider to its endpoints (${why}); refusing to use the vendored address book`,
+  );
+}
+
 /**
- * The individual endpoints behind `source`: the constituent providers of an ethers
- * FallbackProvider (it exposes `providerConfigs`), otherwise `source` itself.
+ * The concrete endpoints behind `source`. An ethers FallbackProvider exposes `providerConfigs`,
+ * and each of its providers may itself be a FallbackProvider, so this walks the tree down to
+ * the leaves. A cycle, nesting deeper than {@link MAX_PROVIDER_NESTING}, a `providerConfigs`
+ * that is not a non-empty list, or an entry without `getBlock` is refused (fail closed).
  */
 function endpointsOf(source: GenesisSource): GenesisSource[] {
-  const configs = (source as { providerConfigs?: unknown }).providerConfigs;
-  if (!Array.isArray(configs)) return [source];
-  return configs.map((c: { provider?: GenesisSource }) => {
-    if (!c || !c.provider || typeof c.provider.getBlock !== 'function') {
-      throw new WrongNetworkError('an RPC endpoint cannot report block 0; refusing to use the vendored address book');
+  const leaves: GenesisSource[] = [];
+  const seenLeaves = new Set<GenesisSource>();
+  const walk = (node: GenesisSource, ancestors: GenesisSource[]): void => {
+    if (ancestors.includes(node)) throw unresolvable('a provider contains itself');
+    if (ancestors.length > MAX_PROVIDER_NESTING) {
+      throw unresolvable(`nested more than ${MAX_PROVIDER_NESTING} levels deep`);
     }
-    return c.provider;
-  });
+    const configs = (node as { providerConfigs?: unknown }).providerConfigs;
+    if (configs === undefined) {
+      if (typeof node.getBlock !== 'function') throw unresolvable('an endpoint cannot report block 0');
+      if (!seenLeaves.has(node)) {
+        seenLeaves.add(node);
+        leaves.push(node);
+      }
+      return;
+    }
+    if (!Array.isArray(configs) || configs.length === 0) {
+      throw unresolvable('providerConfigs is not a non-empty list');
+    }
+    for (const c of configs as Array<{ provider?: GenesisSource } | null | undefined>) {
+      const child = c?.provider;
+      if (!child || typeof child !== 'object') throw unresolvable('a provider entry has no provider');
+      walk(child, [...ancestors, node]);
+    }
+  };
+  walk(source, []);
+  return leaves;
 }
 
 async function readBlock0(source: GenesisSource, timeoutMs: number | undefined) {
@@ -118,7 +148,8 @@ async function assertOneGenesis(source: GenesisSource, expected: string, timeout
  * Fails closed: an unreadable or missing block 0 is a refusal, not a pass.
  *
  * The guard applies per endpoint. A FallbackProvider answers reads by quorum but broadcasts a
- * signed transaction to every endpoint, so each of its endpoints must report `expected` itself.
+ * signed transaction to every endpoint, so each leaf endpoint (through any nesting of
+ * FallbackProviders) must report `expected` itself.
  */
 export async function assertGenesis(
   source: GenesisSource,
