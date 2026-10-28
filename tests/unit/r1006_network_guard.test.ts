@@ -18,7 +18,7 @@ import {
   CONTRACT_ADDRESSES,
   MEMBERSHIP_ADDRESSES,
 } from '../../src/utils/constants';
-import { EXPECTED_GENESIS_HASH, WrongNetworkError } from '../../src/utils/network';
+import { EXPECTED_GENESIS_HASH, WrongNetworkError, assertGenesis } from '../../src/utils/network';
 import * as sdk from '../../src';
 
 const R1006_GENESIS = '0xa3651a272fe411948cbb4cf7cca4cee44be4248d32ab4376cea7636821c6cdd4';
@@ -66,6 +66,39 @@ function chainDouble(genesis: string | null, extra: Record<string, unknown> = {}
   return { p, calls };
 }
 
+/** A provider double whose block 0 is answered from `answers` in turn ('throw' = an RPC error). */
+function switchingDouble(answers: Array<string | 'throw'>) {
+  let n = 0;
+  const p = {
+    getBlock: async (tag: number) => {
+      expect(tag).toBe(0);
+      const a = answers[Math.min(n, answers.length - 1)] as string;
+      n += 1;
+      if (a === 'throw') throw new Error('connection reset');
+      return { hash: a, number: 0 };
+    },
+  };
+  return { p, reads: () => n };
+}
+
+describe('assertGenesis', () => {
+  it('fails closed when getBlock throws, and names the cause', async () => {
+    const err = await assertGenesis(switchingDouble(['throw']).p, R1006_GENESIS).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WrongNetworkError);
+    expect((err as Error).message).toContain('connection reset');
+  });
+
+  it('fails closed on a block without a hash', async () => {
+    await expect(assertGenesis({ getBlock: async () => ({ hash: null }) }, R1006_GENESIS)).rejects.toThrow(
+      WrongNetworkError,
+    );
+  });
+
+  it('passes on the expected hash', async () => {
+    await expect(assertGenesis(switchingDouble([R1006_GENESIS]).p, R1006_GENESIS)).resolves.toBeUndefined();
+  });
+});
+
 describe('CitrateClient refuses an RPC on another genesis', () => {
   function client(genesis: string | null, cfg: Record<string, unknown> = {}) {
     const c = new CitrateClient({ rpcUrl: 'http://127.0.0.1:8545', privateKey: OWNER, ...cfg });
@@ -106,6 +139,43 @@ describe('CitrateClient refuses an RPC on another genesis', () => {
     const { c } = client(R1005_GENESIS);
     await expect(c.verifyNetwork()).rejects.toThrow(WrongNetworkError);
     await expect(c.verifyNetwork()).rejects.toThrow(WrongNetworkError);
+  });
+
+  it('fails closed when block 0 cannot be read (the RPC errors)', async () => {
+    const { c, sent } = client(R1006_GENESIS);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (c as any).provider = {
+      getBlock: async () => {
+        throw new Error('connection reset');
+      },
+    };
+    const err = await c.verifyNetwork().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WrongNetworkError);
+    expect((err as Error).message).toMatch(/cannot read block 0/);
+    await expect(
+      c.deployModel(new TextEncoder().encode('m'), {
+        name: 'm',
+        modelType: 'onnx',
+        accessType: 'public',
+        accessPrice: 0n,
+        encrypted: false,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any),
+    ).rejects.toThrow(WrongNetworkError);
+    expect(sent).toEqual([]);
+  });
+
+  it('a failed check is not cached: once the node reports r1006, the next call re-reads block 0 and passes', async () => {
+    const { c } = client(R1006_GENESIS);
+    const node = switchingDouble([R1005_GENESIS, R1006_GENESIS]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (c as any).provider = node.p;
+    await expect(c.verifyNetwork()).rejects.toThrow(WrongNetworkError);
+    await expect(c.verifyNetwork()).resolves.toBeUndefined();
+    expect(node.reads()).toBe(2);
+    // ...and a success is cached.
+    await expect(c.verifyNetwork()).resolves.toBeUndefined();
+    expect(node.reads()).toBe(2);
   });
 
   it('deployModel refuses before any transaction leaves on the wrong network', async () => {
@@ -204,6 +274,31 @@ describe('ComputeRefunds checks the genesis before using book addresses', () => 
     const { r } = runner(R1006_GENESIS, true);
     const c = new ComputeRefunds(r);
     await expect(c.refundOwed('0x' + 'ab'.repeat(20))).resolves.toBe(5n);
+  });
+
+  it('fails closed when block 0 cannot be read, before any eth_call', async () => {
+    const { r, calls } = runner(R1006_GENESIS);
+    const c = new ComputeRefunds({
+      ...r,
+      getBlock: async () => {
+        throw new Error('connection reset');
+      },
+    });
+    await expect(c.refundOwed('0x' + 'ab'.repeat(20))).rejects.toThrow(WrongNetworkError);
+    await expect(c.claimNativeRefund()).rejects.toThrow(WrongNetworkError);
+    expect(calls).toEqual([]);
+  });
+
+  it('a failed check is not cached: the next call re-reads block 0 and, on r1006, proceeds', async () => {
+    const { r, calls } = runner(R1006_GENESIS);
+    const node = switchingDouble([R1005_GENESIS, R1006_GENESIS]);
+    const c = new ComputeRefunds({ ...r, getBlock: node.p.getBlock });
+    await expect(c.refundOwed('0x' + 'ab'.repeat(20))).rejects.toThrow(WrongNetworkError);
+    expect(calls).toEqual([]);
+    await expect(c.refundOwed('0x' + 'ab'.repeat(20))).resolves.toBe(5n);
+    expect(node.reads()).toBe(2);
+    await expect(c.refundOwed('0x' + 'ab'.repeat(20))).resolves.toBe(5n);
+    expect(node.reads()).toBe(2);
   });
 
   it('refuses book addresses when the runner cannot report block 0', async () => {
