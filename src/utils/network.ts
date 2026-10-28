@@ -52,14 +52,44 @@ export function resolveExpectedGenesis(value: string | null | undefined): string
   return v;
 }
 
+/** Options for {@link assertGenesis}. */
+export interface AssertGenesisOptions {
+  /** Give up on an endpoint that has not answered block 0 within this many ms (a refusal). */
+  timeoutMs?: number;
+}
+
 /**
- * Read block 0 from `source` and throw {@link WrongNetworkError} unless its hash is `expected`.
- * Fails closed: an unreadable or missing block 0 is a refusal, not a pass.
+ * The individual endpoints behind `source`: the constituent providers of an ethers
+ * FallbackProvider (it exposes `providerConfigs`), otherwise `source` itself.
  */
-export async function assertGenesis(source: GenesisSource, expected: string = EXPECTED_GENESIS_HASH): Promise<void> {
+function endpointsOf(source: GenesisSource): GenesisSource[] {
+  const configs = (source as { providerConfigs?: unknown }).providerConfigs;
+  if (!Array.isArray(configs)) return [source];
+  return configs.map((c: { provider?: GenesisSource }) => {
+    if (!c || !c.provider || typeof c.provider.getBlock !== 'function') {
+      throw new WrongNetworkError('an RPC endpoint cannot report block 0; refusing to use the vendored address book');
+    }
+    return c.provider;
+  });
+}
+
+async function readBlock0(source: GenesisSource, timeoutMs: number | undefined) {
+  if (timeoutMs === undefined) return source.getBlock(0);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`no answer within ${timeoutMs} ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([source.getBlock(0), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function assertOneGenesis(source: GenesisSource, expected: string, timeoutMs: number | undefined): Promise<void> {
   let block: { hash?: string | null } | null;
   try {
-    block = await source.getBlock(0);
+    block = await readBlock0(source, timeoutMs);
   } catch (cause) {
     throw new WrongNetworkError(
       `cannot read block 0 from the RPC to verify the network (${(cause as Error)?.message ?? String(cause)}); ` +
@@ -80,5 +110,35 @@ export async function assertGenesis(source: GenesisSource, expected: string = EX
         'Point the client at a node of that network, or pass expectedGenesisHash to match yours.',
       { expected, actual },
     );
+  }
+}
+
+/**
+ * Read block 0 from `source` and throw {@link WrongNetworkError} unless its hash is `expected`.
+ * Fails closed: an unreadable or missing block 0 is a refusal, not a pass.
+ *
+ * The guard applies per endpoint. A FallbackProvider answers reads by quorum but broadcasts a
+ * signed transaction to every endpoint, so each of its endpoints must report `expected` itself.
+ */
+export async function assertGenesis(
+  source: GenesisSource,
+  expected: string = EXPECTED_GENESIS_HASH,
+  options: AssertGenesisOptions = {},
+): Promise<void> {
+  const endpoints = endpointsOf(source);
+  if (endpoints.length === 1) return assertOneGenesis(endpoints[0] as GenesisSource, expected, options.timeoutMs);
+  if (endpoints.length === 0) {
+    throw new WrongNetworkError('no RPC endpoint to verify the network; refusing to use the vendored address book', {
+      expected,
+    });
+  }
+  const results = await Promise.allSettled(endpoints.map((e) => assertOneGenesis(e, expected, options.timeoutMs)));
+  const bad = results.findIndex((r) => r.status === 'rejected');
+  if (bad >= 0) {
+    const reason = (results[bad] as PromiseRejectedResult).reason as WrongNetworkError;
+    throw new WrongNetworkError(`RPC endpoint ${bad + 1} of ${endpoints.length}: ${reason.message}`, {
+      ...(reason.details ?? { expected }),
+      endpoint: bad,
+    });
   }
 }

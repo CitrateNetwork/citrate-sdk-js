@@ -131,7 +131,7 @@ export class ComputeRefunds {
     if (!this.networkCheck) {
       const source: GenesisSource | null =
         typeof this.runner.getBlock === 'function'
-          ? { getBlock: (tag) => this.runner.getBlock!(tag) }
+          ? (this.runner as GenesisSource)
           : this.runner.provider && typeof this.runner.provider.getBlock === 'function'
             ? this.runner.provider
             : null;

@@ -102,6 +102,8 @@ export class CitrateClient {
   private readonly allowInsecureHttp: boolean;
   /** Block-0 hash the RPC must report; null = no check. */
   private readonly expectedGenesis: string | null;
+  /** Per-endpoint limit for the block-0 read (the configured request timeout). */
+  private readonly timeoutMs: number;
   /** In-flight or successful network check (cleared on failure so a later call retries). */
   private networkCheck: Promise<void> | null = null;
 
@@ -125,6 +127,7 @@ export class CitrateClient {
     }
     this.allowInsecureHttp = config.allowInsecureHttp ?? false;
     this.expectedGenesis = resolveExpectedGenesis(config.expectedGenesisHash);
+    this.timeoutMs = config.timeout || 30000;
     // SJS-B / SPY-B-009: fail closed on a remote plaintext RPC endpoint before
     // any provider is built. Loopback passes; the caller opts in for internal
     // TLS-less networks via allowInsecureHttp.
@@ -160,7 +163,7 @@ export class CitrateClient {
       ...config.headers,
     };
     this.axiosPool = this.rpcUrls.map((url) =>
-      axios.create({ baseURL: url, timeout: config.timeout || 30000, headers }),
+      axios.create({ baseURL: url, timeout: this.timeoutMs, headers }),
     );
     this.axios = this.axiosPool[0] as AxiosInstance;
 
@@ -209,15 +212,17 @@ export class CitrateClient {
   }
 
   /**
-   * Check that the RPC's block 0 is the expected genesis (see `expectedGenesisHash`). Runs
-   * once per client; a failure is not cached. Called automatically before every
-   * transaction this client sends. Throws `WrongNetworkError` on another network.
+   * Check that the RPC's block 0 is the expected genesis (see `expectedGenesisHash`). With
+   * several RPC URLs every endpoint is checked, because a transaction is broadcast to all of
+   * them. Runs once per client; a failure is not cached. Called automatically before every
+   * transaction this client sends. Throws `WrongNetworkError` on another network, or when an
+   * endpoint cannot return block 0 within the configured `timeout`.
    */
   async verifyNetwork(): Promise<void> {
     const expected = this.expectedGenesis;
     if (expected === null) return;
     if (!this.networkCheck) {
-      this.networkCheck = assertGenesis(this.provider, expected).catch((err: unknown) => {
+      this.networkCheck = assertGenesis(this.provider, expected, { timeoutMs: this.timeoutMs }).catch((err: unknown) => {
         this.networkCheck = null;
         throw err;
       });

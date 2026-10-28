@@ -42,13 +42,26 @@ Held for the r1006 public cutover: publish only after rpc.citrate.ai serves r100
   `identity.verifyWalletAddressOnChain` and `compute.ComputeRefunds` run the same check before
   they use a book address. `expectedGenesisHash` (client config / options) overrides the hash;
   `null` skips the check for a local dev chain.
+- The guard applies per endpoint. With several `rpcUrl`s (or a caller-supplied ethers
+  `FallbackProvider` in `ComputeRefunds` / `verifyWalletAddressOnChain`) every endpoint must
+  report the expected block 0, because a transaction is broadcast to all of them; a quorum is
+  not enough. An endpoint that errors, returns no block 0, or does not answer within the client
+  `timeout` is a refusal. A failed check is not cached: the next call reads block 0 again.
 - `scripts/sync-contract.mjs` and `scripts/check-contract-drift.sh` honour
   `CITRATE_FEDERATION_DIR`, and the sync refuses an artifact without a 32-byte `genesisHash`.
 
 ### Tests
 
-- `r1006_network_guard.test.ts` (18 tests): the r1006 book, no r1005 address, and the guard on
-  every path (wrong genesis, missing block 0, failure not cached, opt-out, override).
+- `r1006_network_guard.test.ts` (25 tests): the r1006 book, no r1005 address, and the guard on
+  every path: wrong genesis, missing or unreadable block 0 (fails closed), a failed check not
+  cached (fail then succeed reads block 0 twice; a success is then cached), opt-out, override.
+- `r1006_genesis_per_endpoint.test.ts` (9 tests, loopback JSON-RPC endpoints): three endpoints
+  with one on another genesis are refused and no endpoint receives the raw transaction;
+  an endpoint that errors or never answers block 0 is refused; a failed endpoint is re-read;
+  the same holds for a caller-supplied `FallbackProvider`.
+- `scripts/check-keyshare-pack.mjs` (packed artifact) answers block 0 with the packed
+  `EXPECTED_GENESIS_HASH`, so the key-share checks run with the guard on, and it also requires
+  the packed client to refuse another genesis before sending.
 - `identity_wallet.test.ts` pins the r1006 `predictAddress(0x4242…)` vector `0xEFf9CC17…`
   (computed offline; the same formula reproduces r1005's live `0x6Ef76179…`, which stays pinned
   as a formula check). Re-read it from the live factory after the cutover.

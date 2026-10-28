@@ -253,7 +253,7 @@ Block explorer: <https://explorer.citrate.ai>. Maintainers refresh the artifact 
 
 ### Network guard
 
-Two networks can share chain id 40204 (r1005 and r1006 do), so the chain id alone can't tell whether an RPC has the contracts in the address book. Before `CitrateClient` sends a transaction, and before `identity.verifyWalletAddressOnChain` or `compute.ComputeRefunds` use a book address, the SDK reads block 0 from the RPC and throws `WrongNetworkError` (code `WRONG_NETWORK`) unless its hash is `EXPECTED_GENESIS_HASH`. Call `client.verifyNetwork()` to check up front. For another network pass `expectedGenesisHash: '0x…'`; for a local dev chain pass `expectedGenesisHash: null`.
+Two networks can share chain id 40204 (r1005 and r1006 do), so the chain id alone can't tell whether an RPC has the contracts in the address book. Before `CitrateClient` sends a transaction, and before `identity.verifyWalletAddressOnChain` or `compute.ComputeRefunds` use a book address, the SDK reads block 0 from the RPC and throws `WrongNetworkError` (code `WRONG_NETWORK`) unless its hash is `EXPECTED_GENESIS_HASH`. With several RPC URLs every endpoint is checked, since a transaction is broadcast to all of them. Call `client.verifyNetwork()` to check up front. For another network pass `expectedGenesisHash: '0x…'`; for a local dev chain pass `expectedGenesisHash: null`.
 
 ### Precompiles
 
