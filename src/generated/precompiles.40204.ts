@@ -7,7 +7,7 @@
  * Sources (relative to the citrate-chain checkout):
  *   core/execution/src/precompiles/mod.rs
  *   core/execution/src/agent_fork.rs
- *   contracts/addresses/40204.json
+ *   contracts/addresses/r1006/40204.json
  */
 
 export type PrecompileGroup = 'hosted' | 'pure' | 'agent';
@@ -32,7 +32,7 @@ export interface ChainPrecompile {
 
 export const CHAIN_PRECOMPILE_SOURCE = {
   chainId: 40204,
-  files: ['core/execution/src/precompiles/mod.rs', 'core/execution/src/agent_fork.rs', 'contracts/addresses/40204.json'],
+  files: ['core/execution/src/precompiles/mod.rs', 'core/execution/src/agent_fork.rs', 'contracts/addresses/r1006/40204.json'],
   agentForkChainPin: 0,
   agentForkActivationHeight: 0,
 } as const;

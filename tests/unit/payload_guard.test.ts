@@ -16,7 +16,7 @@ const Y = 'ab'.repeat(32);
 const MODEL = new TextEncoder().encode('m');
 
 function client(): { c: CitrateClient; sent: string[] } {
-  const c = new CitrateClient({ rpcUrl: 'http://127.0.0.1:8545', privateKey: OWNER });
+  const c = new CitrateClient({ rpcUrl: 'http://127.0.0.1:8545', expectedGenesisHash: null, privateKey: OWNER });
   const sent: string[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (c as any).wallet.sendTransaction = async (tx: { data: string }) => {

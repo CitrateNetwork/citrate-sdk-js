@@ -54,7 +54,9 @@ jobs:
   # CL-C2 / SW-089: fail the build if the vendored federation-contract artifact
   # drifts from the canonical federation intermediate. Federation's own
   # contract-artifact-drift gate keeps that intermediate fresh vs citrate-chain,
-  # so this SDK-side gate only has to prove the vendored copy matches it.
+  # so this SDK-side gate only has to prove the vendored copy matches it. Since 0.3.0 the
+  # artifact is the r1006 book and carries chain.genesisHash (r1006 block 0), which the SDK's
+  # network guard enforces; the federation artifact PR merges first.
   # Requires a read-only token for CitrateNetwork/citrate-federation; inert until
   # GitHub Actions + CITRATE_FEDERATION_READ_TOKEN are available (the local
   # mirror scripts/check-contract-drift.sh runs the identical check meanwhile).
@@ -96,13 +98,13 @@ jobs:
   # Precompile drift gate: src/generated/precompiles.40204.ts (and the README precompile table)
   # must match citrate-chain's precompile arrays (core/execution/src/precompiles/mod.rs), the agent
   # fork pin (core/execution/src/agent_fork.rs) and the book's `precompiles` block
-  # (contracts/addresses/40204.json). citrate-chain is public, so this needs no token.
-  # CHAIN_REF pins the chain commit the generated file was built from; bump it with every
-  # `npm run sync-precompiles` (2979a157 = chain main with the r1005 book, agent pin Some(0)).
+  # (contracts/addresses/r1006/40204.json, the r1006 book). citrate-chain is public, so this
+  # needs no token. CHAIN_REF pins the chain commit the generated file was built from; bump it
+  # with every `npm run sync-precompiles` (e4ed35d5 = chain main with the final r1006 book).
   precompile-drift:
     runs-on: ubuntu-latest
     env:
-      CHAIN_REF: 2979a1576d12dc75375ae30be5c37a2cdd866c87
+      CHAIN_REF: e4ed35d56ab82e3b0eb7cf2c50f3964749c962c8
     steps:
       - name: Checkout this repo
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -117,7 +119,7 @@ jobs:
           sparse-checkout: |
             core/execution/src/precompiles/mod.rs
             core/execution/src/agent_fork.rs
-            contracts/addresses/40204.json
+            contracts/addresses/r1006/40204.json
           sparse-checkout-cone-mode: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:

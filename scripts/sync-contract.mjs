@@ -9,6 +9,9 @@
  *
  *   npm run sync-contract          # overwrite the vendored copy
  *   npm run verify:contract        # CI gate: non-zero if vendored copy drifted
+ *
+ * CITRATE_FEDERATION_DIR points at another citrate-federation checkout (e.g. a branch worktree)
+ * instead of the sibling.
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -17,7 +20,10 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const LABS_ROOT = resolve(REPO_ROOT, '..');
-const CANONICAL = resolve(LABS_ROOT, 'citrate-federation', 'contract', 'federation-contract.json');
+const FEDERATION_DIR = process.env.CITRATE_FEDERATION_DIR
+  ? resolve(process.env.CITRATE_FEDERATION_DIR)
+  : resolve(LABS_ROOT, 'citrate-federation');
+const CANONICAL = resolve(FEDERATION_DIR, 'contract', 'federation-contract.json');
 const VENDORED = resolve(REPO_ROOT, 'src', 'generated', 'federation-contract.json');
 
 const CHECK = process.argv.includes('--check');
@@ -32,6 +38,7 @@ if (!existsSync(CANONICAL)) {
 const canonical = JSON.parse(readFileSync(CANONICAL, 'utf8'));
 if (canonical.schemaVersion !== 1) { console.error(`[sync-contract] unexpected schemaVersion ${canonical.schemaVersion}`); process.exit(1); }
 if (canonical.chain?.chainId !== 40204) { console.error(`[sync-contract] chainId ${canonical.chain?.chainId}, expected 40204`); process.exit(1); }
+if (!/^0x[0-9a-f]{64}$/.test(canonical.chain?.genesisHash ?? '')) { console.error(`[sync-contract] chain.genesisHash ${canonical.chain?.genesisHash} is not a 32-byte lowercase hex hash`); process.exit(1); }
 
 const serialized = JSON.stringify(canonical, null, 2) + '\n';
 
@@ -46,4 +53,4 @@ if (CHECK) {
 }
 
 writeFileSync(VENDORED, serialized);
-console.log(`[sync-contract] wrote ${VENDORED} (EntryPoint ${canonical.aaStack.EntryPoint})`);
+console.log(`[sync-contract] wrote ${VENDORED} (EntryPoint ${canonical.aaStack.EntryPoint}, genesis ${canonical.chain.genesisHash})`);

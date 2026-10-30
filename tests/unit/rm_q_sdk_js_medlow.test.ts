@@ -30,7 +30,7 @@ describe('SJS-B-003 — receipt topics matched by keccak, not an impossible ASCI
   });
 
   test('deployModel resolves the modelId from a realistic keccak-topic receipt', async () => {
-    const c = new CitrateClient({ rpcUrl: 'http://127.0.0.1:8545', privateKey: SENDER_KEY });
+    const c = new CitrateClient({ rpcUrl: 'http://127.0.0.1:8545', expectedGenesisHash: null, privateKey: SENDER_KEY });
     const modelId = '0x' + '11'.repeat(32);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (c as any).wallet.sendTransaction = async () => ({

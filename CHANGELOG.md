@@ -4,6 +4,81 @@ All notable changes to `@citratelabs/sdk` are documented here. This project
 follows [Semantic Versioning](https://semver.org/); while it is 0.x, a patch
 release may carry breaking changes when a security fix requires them.
 
+## [0.3.0] - 2026-10-27 — r1006 address book and a genesis guard
+
+Held for the r1006 public cutover: publish only after rpc.citrate.ai serves r1006.
+
+### Changed
+
+- Address book follows the r1006 network of 40204 (genesis block
+  `0xa3651a272fe411948cbb4cf7cca4cee44be4248d32ab4376cea7636821c6cdd4`). The book is citrate-chain
+  `contracts/addresses/r1006/40204.json` (final since a857443e; every contract is in block 0).
+  `src/generated/federation-contract.json` re-synced with `npm run sync-contract` from the
+  citrate-federation gen-contract output (branch `beta/fxsdk-r1006-contract`); no hand edits.
+  AA stack: `CitrateWalletFactory 0x6ee3b590…`, `CitratePaymaster 0x5a1e2d73…` (EntryPoint,
+  CitrateWallet and the validators keep their addresses). Membership: `CitrateMemberSBT
+  0x88316513…`, `MembershipStakeVault 0xd6632ea2…`. `predictWalletAddress` therefore returns
+  r1006 counterfactual addresses.
+- **Removed from `CONTRACT_ADDRESSES`** (not in r1006 block 0): `LiquidStakingPool`,
+  `CitAgentTimelock`, `AppRegistry`, `AuditBundleRegistry`, `CapabilityGrant`,
+  `ClassificationRegistry`, `ContradictionLedger`, `CrossOrgEnvelope`, `CrossOrgIndex`,
+  `DefensePrimeComplianceRegistry`, `DefensePrimeFLScopeIndex`, `EntityRegistry`,
+  `GovernanceProtocolFactory`, `GovernanceTemplateRegistry`, `MeetingRegistry`, `MoqRegistry`,
+  `MultiSigEnvelope`, `PartProvenanceRegistry`, `PolicyBinding`, `QuorumAnchorRegistry`,
+  `ReleaseManifestRegistry`, `RoleEscalation`, `RoleGrantTenantIndex`, `Sortition`,
+  `SponsorEvidenceRegistry`, `SupplierRegistry`, `TenantHierarchy`, `TinaWorkpaperRegistry`,
+  `TripwireRegistry`, `VoteAllowance`. Added: `GovernanceTimelock`, `GovernanceMultisig`,
+  `GuardianTimelock`, `GuardianMultisig`, `GuardianCanceller`, `FederatedRoundLedger`,
+  `PatronageLedger`, `TeamVesting_team_1`.
+- Precompile table regenerated against citrate-chain e4ed35d5 and the r1006 book (no address
+  changes); the CI `precompile-drift` job reads the r1006 book at that commit.
+
+### Added
+
+- Network guard. r1005 and r1006 share chain id 40204, so the chain id cannot tell them apart.
+  `CitrateClient` reads block 0 before it sends a transaction (`deployModel`, `inference`,
+  `batchInference`) and throws `WrongNetworkError` (code `WRONG_NETWORK`) unless its hash is
+  `EXPECTED_GENESIS_HASH`; `client.verifyNetwork()` runs the check up front.
+  `identity.verifyWalletAddressOnChain` and `compute.ComputeRefunds` run the same check before
+  they use a book address. `expectedGenesisHash` (client config / options) overrides the hash;
+  `null` skips the check for a local dev chain.
+- The guard applies per endpoint. With several `rpcUrl`s (or a caller-supplied ethers
+  `FallbackProvider` in `ComputeRefunds` / `verifyWalletAddressOnChain`) every endpoint must
+  report the expected block 0, because a transaction is broadcast to all of them; a quorum is
+  not enough. Nested FallbackProviders are walked down to their leaf endpoints; a provider
+  shape that cannot be resolved to endpoints (a cycle, nesting deeper than 8 levels, an empty
+  or non-list `providerConfigs`) is refused. An endpoint that errors, returns no block 0, or does not answer within the client
+  `timeout` is a refusal. A failed check is not cached: the next call reads block 0 again.
+- `scripts/sync-contract.mjs` and `scripts/check-contract-drift.sh` honour
+  `CITRATE_FEDERATION_DIR`, and the sync refuses an artifact without a 32-byte `genesisHash`.
+
+### Tests
+
+- `r1006_network_guard.test.ts` (25 tests): the r1006 book, no r1005 address, and the guard on
+  every path: wrong genesis, missing or unreadable block 0 (fails closed), a failed check not
+  cached (fail then succeed reads block 0 twice; a success is then cached), opt-out, override.
+- `r1006_genesis_per_endpoint.test.ts` (18 tests, loopback JSON-RPC endpoints): three endpoints
+  with one on another genesis are refused and no endpoint receives the raw transaction;
+  an endpoint that errors or never answers block 0 is refused; a failed endpoint is re-read;
+  the same holds for a caller-supplied `FallbackProvider`, including one nested inside another
+  (a signed claim never reaches the wrong-genesis leaf); unresolvable provider shapes refuse.
+- `scripts/check-keyshare-pack.mjs` (packed artifact) answers block 0 with the packed
+  `EXPECTED_GENESIS_HASH`, so the key-share checks run with the guard on, and it also requires
+  the packed client to refuse another genesis before sending.
+- `identity_wallet.test.ts` pins the r1006 `predictAddress(0x4242…)` vector `0xEFf9CC17…`
+  (computed offline; the same formula reproduces r1005's live `0x6Ef76179…`, which stays pinned
+  as a formula check). Re-read it from the live factory after the cutover.
+- Offline client tests that stub `sendTransaction` pass `expectedGenesisHash: null` (no chain).
+
+### Docs
+
+- README: the r1006 book, the network guard, and "Tokenomics are not yet determined; see
+  docs.citrate.ai."
+
+### Compatibility shim
+
+- `@citratelabs/citrate-js` 0.3.0 re-exports `@citratelabs/sdk` 0.3.0.
+
 ## [0.2.5] - 2026-10-06 — r1005 address book and generated precompiles
 
 ### Fixed

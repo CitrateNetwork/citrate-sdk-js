@@ -6,7 +6,7 @@
  *   core/execution/src/precompiles/mod.rs   PURE_PRECOMPILE_ADDRESSES + AGENT_FORK_PRECOMPILE_ADDRESSES
  *                                           (each element line ends with `// 0xNNNN`)
  *   core/execution/src/agent_fork.rs        AGENT_PRECOMPILES_PINS (the 40204 activation pin)
- *   contracts/addresses/40204.json          `precompiles` block (book name -> padded address; carries
+ *   contracts/addresses/r1006/40204.json    `precompiles` block (book name -> padded address; carries
  *                                           the hosted inference family 0x0100-0x0106, not bridged)
  *
  * Every parse failure throws. A generator that silently drops an entry is worse than no generator.
@@ -17,7 +17,7 @@ const CHAIN_ID = 40204;
 const PATHS = {
   modRs: 'core/execution/src/precompiles/mod.rs',
   agentForkRs: 'core/execution/src/agent_fork.rs',
-  book: 'contracts/addresses/40204.json',
+  book: 'contracts/addresses/r1006/40204.json',
 };
 
 /**

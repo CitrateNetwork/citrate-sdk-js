@@ -30,6 +30,7 @@ import {
 } from '../utils/validation';
 import { PRECOMPILE_ADDRESSES, SDK_VERSION } from '../utils/constants';
 import { enforceTransportSecurity } from '../utils/transport';
+import { assertGenesis, resolveExpectedGenesis } from '../utils/network';
 
 // SJS-B-003 (mirrors Python SPY-B-006): receipt log topics are keccak256 of the
 // event signature, NOT the ASCII hex of the event name. The pre-fix matcher
@@ -70,6 +71,13 @@ export interface CitrateClientConfig {
    * trusted internal network without TLS.
    */
   allowInsecureHttp?: boolean;
+  /**
+   * Block-0 hash the RPC must report before the client sends a transaction. Defaults to the
+   * genesis of the vendored address book (`EXPECTED_GENESIS_HASH`, r1006): r1005 and r1006
+   * share chain id 40204, so the chain id alone cannot tell them apart. Pass another hash for
+   * a different network, or `null` to skip the check (a local dev chain).
+   */
+  expectedGenesisHash?: string | null;
 }
 
 export class CitrateClient {
@@ -92,6 +100,12 @@ export class CitrateClient {
   private readonly ipfsApiUrl: string | undefined;
   /** SJS-B / SPY-B-009 — opt-in to remote plaintext endpoints. */
   private readonly allowInsecureHttp: boolean;
+  /** Block-0 hash the RPC must report; null = no check. */
+  private readonly expectedGenesis: string | null;
+  /** Per-endpoint limit for the block-0 read (the configured request timeout). */
+  private readonly timeoutMs: number;
+  /** In-flight or successful network check (cleared on failure so a later call retries). */
+  private networkCheck: Promise<void> | null = null;
 
   constructor(config: CitrateClientConfig) {
     this.rpcUrls = Array.isArray(config.rpcUrl)
@@ -112,6 +126,8 @@ export class CitrateClient {
       throw new ValidationError('CitrateClient: invalid private key format');
     }
     this.allowInsecureHttp = config.allowInsecureHttp ?? false;
+    this.expectedGenesis = resolveExpectedGenesis(config.expectedGenesisHash);
+    this.timeoutMs = config.timeout || 30000;
     // SJS-B / SPY-B-009: fail closed on a remote plaintext RPC endpoint before
     // any provider is built. Loopback passes; the caller opts in for internal
     // TLS-less networks via allowInsecureHttp.
@@ -147,7 +163,7 @@ export class CitrateClient {
       ...config.headers,
     };
     this.axiosPool = this.rpcUrls.map((url) =>
-      axios.create({ baseURL: url, timeout: config.timeout || 30000, headers }),
+      axios.create({ baseURL: url, timeout: this.timeoutMs, headers }),
     );
     this.axios = this.axiosPool[0] as AxiosInstance;
 
@@ -193,6 +209,25 @@ export class CitrateClient {
         }
       );
     }
+  }
+
+  /**
+   * Check that the RPC's block 0 is the expected genesis (see `expectedGenesisHash`). With
+   * several RPC URLs every endpoint is checked, because a transaction is broadcast to all of
+   * them. Runs once per client; a failure is not cached. Called automatically before every
+   * transaction this client sends. Throws `WrongNetworkError` on another network, or when an
+   * endpoint cannot return block 0 within the configured `timeout`.
+   */
+  async verifyNetwork(): Promise<void> {
+    const expected = this.expectedGenesis;
+    if (expected === null) return;
+    if (!this.networkCheck) {
+      this.networkCheck = assertGenesis(this.provider, expected, { timeoutMs: this.timeoutMs }).catch((err: unknown) => {
+        this.networkCheck = null;
+        throw err;
+      });
+    }
+    return this.networkCheck;
   }
 
   // Connection methods
@@ -288,6 +323,9 @@ export class CitrateClient {
     const wire = JSON.stringify(txData);
     assertPayloadHasNoKeyShareMaterial(wire);
 
+    // Refuse another network (same chain id, different genesis) before anything is sent.
+    await this.verifyNetwork();
+
     // Deploy to blockchain — canonical INFERENCE_DEPLOY precompile from
     // constants (audit -004: no hardcoded address literals in the client).
     const tx = await this.wallet.sendTransaction({
@@ -358,6 +396,8 @@ export class CitrateClient {
 
     // Execute inference — canonical INFERENCE_RUN precompile from
     // constants (audit -004: no hardcoded address literals in the client).
+    // Refuse another network (same chain id, different genesis) before anything is sent.
+    await this.verifyNetwork();
     const startTime = Date.now();
     const tx = await this.wallet.sendTransaction({
       to: PRECOMPILE_ADDRESSES.INFERENCE_RUN,

@@ -5,4 +5,5 @@ export {
   COMPUTE_REFUND_SELECTORS,
   type RefundRunner,
   type ComputeRefundAddresses,
+  type ComputeRefundOptions,
 } from './refunds';

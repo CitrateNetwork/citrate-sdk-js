@@ -15,6 +15,7 @@ function fakeProvider(o: { chainId?: bigint; code?: string; echo?: boolean } = {
   const local = predictWalletAddress(UID);
   const p = {
     getNetwork: async () => { calls.push('chainId'); return { chainId: o.chainId ?? 40204n }; },
+    getBlock: async () => { calls.push('genesis'); return { hash: FEDERATION_CONTRACT.chain.genesisHash }; },
     getCode: async () => { calls.push('getCode'); return o.code ?? '0x6080'; },
     call: async () => {
       calls.push('call');
@@ -38,10 +39,10 @@ describe('PBA-L6b-027 variant: verifyWalletAddressOnChain checks chain and facto
     const { p } = fakeProvider({ echo: false });
     await expect(verifyWalletAddressOnChain(UID, p)).rejects.toThrow(/do not fund/);
   });
-  it('happy path checks chain, then code, then the prediction; chain id overridable', async () => {
+  it('happy path checks chain, genesis, then code, then the prediction; chain id overridable', async () => {
     const { p, calls } = fakeProvider();
     await expect(verifyWalletAddressOnChain(UID, p)).resolves.toBe(predictWalletAddress(UID));
-    expect(calls).toEqual(['chainId', 'getCode', 'call']);
+    expect(calls).toEqual(['chainId', 'genesis', 'getCode', 'call']);
     const dev = fakeProvider({ chainId: 31337n });
     await expect(verifyWalletAddressOnChain(UID, dev.p, { chainId: 31337 })).resolves.toBe(predictWalletAddress(UID));
     expect(FEDERATION_CONTRACT.chain.chainId).toBe(40204);

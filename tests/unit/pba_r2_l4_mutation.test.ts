@@ -178,7 +178,7 @@ describe('assertNoKeyShareMaterial', () => {
 
 describe('deployModel unencrypted path is unchanged', () => {
   it('sends plaintext metadata with no encryption block and an empty accessList', async () => {
-    const client = new CitrateClient({ rpcUrl: 'http://127.0.0.1:8545', privateKey: OWNER });
+    const client = new CitrateClient({ rpcUrl: 'http://127.0.0.1:8545', expectedGenesisHash: null, privateKey: OWNER });
     const sent: string[] = [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (client as any).wallet.sendTransaction = async (tx: { data: string }) => {
@@ -201,13 +201,13 @@ describe('deployModel unencrypted path is unchanged', () => {
 describe('deployModel pre-existing guards on the changed function', () => {
   const cfg: ModelConfig = { name: 'm', modelType: ModelType.ONNX, accessType: AccessType.PUBLIC, accessPrice: 0n, encrypted: true };
   it('encrypted without a KeyManager refuses with the plaintext-upload message', async () => {
-    const client = new CitrateClient({ rpcUrl: 'http://127.0.0.1:8545', privateKey: OWNER });
+    const client = new CitrateClient({ rpcUrl: 'http://127.0.0.1:8545', expectedGenesisHash: null, privateKey: OWNER });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (client as any).keyManager = undefined;
     await expect(client.deployModel(MODEL, cfg)).rejects.toThrow(/no private key\/KeyManager is configured — refusing to upload the model in plaintext/);
   });
   it('a missing receipt fails; deploymentTime is epoch seconds', async () => {
-    const client = new CitrateClient({ rpcUrl: 'http://127.0.0.1:8545', privateKey: OWNER });
+    const client = new CitrateClient({ rpcUrl: 'http://127.0.0.1:8545', expectedGenesisHash: null, privateKey: OWNER });
     let receipt: unknown = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (client as any).wallet.sendTransaction = async () => ({ hash: '0x' + 'ab'.repeat(32), wait: async () => receipt });

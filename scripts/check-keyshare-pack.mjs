@@ -10,6 +10,8 @@
  *      reconstruct the model key (scripts/keyshare-leak-tripwire.js);
  *   3. the holders must still be able to rebuild the key from their envelopes
  *      (so the check is not passing because sharing silently broke).
+ * The packed client's genesis guard stays on: a chain double answers block 0 with the
+ * packed artifact's genesis, and a client on another genesis must refuse before sending.
  *
  * Usage: node scripts/check-keyshare-pack.mjs [path/to/package.tgz]
  * Without an argument it runs `npm pack` itself (requires a prior build).
@@ -57,19 +59,49 @@ try {
   const MODEL = new TextEncoder().encode('proprietary-model-weights');
   const DEPLOYED_TOPIC = require('ethers').ethers.id('ModelDeployed(bytes32,address)');
 
-  const client = new CitrateClient({ rpcUrl: 'http://127.0.0.1:8545', privateKey: OWNER });
-  const captured = [];
-  client.wallet.sendTransaction = async (tx) => {
-    captured.push(tx.data);
-    return {
-      hash: '0x' + 'ab'.repeat(32),
-      wait: async () => ({ logs: [{ topics: [DEPLOYED_TOPIC], data: '0x' + 'ab'.repeat(64) }], gasUsed: 21000n }),
+  // The packed client keeps its network guard: a chain double answers block 0 with the
+  // packed artifact's own genesis (EXPECTED_GENESIS_HASH), so the guard runs and passes.
+  // Port 1 is never a node, so nothing here can reach a real RPC.
+  const GENESIS = sdk.EXPECTED_GENESIS_HASH;
+  if (!/^0x[0-9a-f]{64}$/.test(String(GENESIS))) fail(`packed EXPECTED_GENESIS_HASH is not a 32-byte hash: ${GENESIS}`);
+  function capturingClient(genesis) {
+    const c = new CitrateClient({ rpcUrl: 'http://127.0.0.1:1', privateKey: OWNER });
+    const seen = { block0Reads: 0, sent: [] };
+    c.provider = {
+      getBlock: async (tag) => {
+        if (tag !== 0) throw new Error(`unexpected getBlock(${tag})`);
+        seen.block0Reads += 1;
+        return { hash: genesis, number: 0 };
+      },
     };
-  };
+    c.wallet.sendTransaction = async (tx) => {
+      seen.sent.push(tx.data);
+      return {
+        hash: '0x' + 'ab'.repeat(32),
+        wait: async () => ({ logs: [{ topics: [DEPLOYED_TOPIC], data: '0x' + 'ab'.repeat(64) }], gasUsed: 21000n }),
+      };
+    };
+    return { client: c, seen };
+  }
+  const { client, seen } = capturingClient(GENESIS);
+  const captured = seen.sent;
   const base = {
     name: 'm', modelType: sdk.ModelType.ONNX, accessType: sdk.AccessType.PUBLIC, accessPrice: 0n, encrypted: true,
     encryptionConfig: { algorithm: 'AES-256-GCM', keyDerivation: 'HKDF-SHA256', accessControl: true, thresholdShares: 2, totalShares: 3 },
   };
+
+  // 0. the packed network guard is live: another block 0 is refused before any send
+  {
+    const other = capturingClient('0x' + '0'.repeat(63) + '1');
+    let wrongNetwork = false;
+    try {
+      await other.client.deployModel(MODEL, { ...base, encrypted: false, encryptionConfig: undefined });
+    } catch (e) {
+      wrongNetwork = e && e.code === 'WRONG_NETWORK';
+    }
+    if (!wrongNetwork) fail('the packed client did not refuse an RPC on another genesis');
+    if (other.seen.sent.length !== 0) fail('a transaction was sent to an RPC on another genesis');
+  }
 
   // 1. refusal without holders
   let refused = false;
@@ -88,6 +120,7 @@ try {
     encryptionConfig: { ...base.encryptionConfig, shareHolderPublicKeys: holderPubs },
   });
   if (captured.length !== 1) fail(`expected 1 captured tx, got ${captured.length}`);
+  if (seen.block0Reads < 1) fail('the deploy was sent without the block-0 network check');
   const payload = JSON.parse(Buffer.from(captured[0].slice(2), 'hex').toString('utf8'));
   const key = await new KeyManager(OWNER).decryptKeyFromOwner(payload.metadata.encryption.encryptedKey);
   const verdict = revealsKey(captured[0], key);
