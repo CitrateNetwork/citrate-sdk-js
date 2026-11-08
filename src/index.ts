@@ -6,7 +6,7 @@
  * encryption, access control, and payment systems.
  */
 
-export { CitrateClient } from './client/CitrateClient';
+export { CitrateClient, DEFAULT_DEPLOY_RECEIPT_TIMEOUT_MS } from './client/CitrateClient';
 export { WebSocketClient } from './client/WebSocketClient';
 
 // Types and interfaces
