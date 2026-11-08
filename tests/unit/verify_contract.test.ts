@@ -20,6 +20,7 @@ import {
   prepareStandardJson,
   buildVerifySourceCodeForm,
   checkVerifyStatus,
+  waitForVerification,
   BuildInfoError,
   VerificationFailedError,
   VerificationRejectedError,
@@ -74,7 +75,13 @@ interface Seen {
   url: string;
   contentType: string | undefined;
   body: string;
+  /** Date.now() when the request arrived. */
+  at: number;
 }
+
+/** Script status RESET: drop the connection without answering. HANG: never answer. */
+const RESET = 0;
+const HANG = -1;
 
 async function recorder(script: [number, string][]): Promise<{ url: string; seen: Seen[]; close: () => Promise<void> }> {
   const seen: Seen[] = [];
@@ -83,8 +90,13 @@ async function recorder(script: [number, string][]): Promise<{ url: string; seen
     let body = '';
     req.on('data', (c: Buffer) => (body += c.toString('utf8')));
     req.on('end', () => {
-      seen.push({ method: req.method ?? '', url: req.url ?? '', contentType: req.headers['content-type'], body });
+      seen.push({ method: req.method ?? '', url: req.url ?? '', contentType: req.headers['content-type'], body, at: Date.now() });
       const [status, answer] = (queue.length > 1 ? queue.shift() : queue[0]) ?? [200, '{}'];
+      if (status === RESET) {
+        req.socket.destroy();
+        return;
+      }
+      if (status === HANG) return;
       res.writeHead(status, { 'content-type': 'application/json', connection: 'close' });
       res.end(answer);
     });
@@ -94,7 +106,11 @@ async function recorder(script: [number, string][]): Promise<{ url: string; seen
   return {
     url: `http://127.0.0.1:${port}/api`,
     seen,
-    close: () => new Promise<void>((r) => server.close(() => r())),
+    close: () =>
+      new Promise<void>((r) => {
+        server.closeAllConnections();
+        server.close(() => r());
+      }),
   };
 }
 
@@ -362,6 +378,73 @@ describe('verifyContract', () => {
       await expect(p).rejects.toMatchObject({ guid: GUID, lastStatus: 'Pending in queue' });
     } finally {
       await srv.close();
+    }
+  });
+
+  it('a connection reset, a 5xx and a 429 while polling do not end the wait', async () => {
+    const srv = await recorder([[200, OK_GUID], [RESET, ''], [503, 'Service Unavailable'], [429, 'Too Many Requests'], [200, PASS]]);
+    try {
+      const r = await verifyContract({ address: FORGE_ADDR, buildInfo: forgeBuildInfo(), contract: 'Greeter', explorerUrl: srv.url, ...fast });
+      expect(r).toMatchObject({ status: 'verified', guid: GUID, message: 'Pass - Verified' });
+      expect(srv.seen).toHaveLength(5);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('a 4xx other than 429 while polling ends the wait', async () => {
+    const srv = await recorder([[200, OK_GUID], [404, 'not found'], [200, PASS]]);
+    try {
+      const p = verifyContract({ address: FORGE_ADDR, buildInfo: forgeBuildInfo(), contract: 'Greeter', explorerUrl: srv.url, ...fast });
+      await expect(p).rejects.toBeInstanceOf(ExplorerResponseError);
+      await expect(p).rejects.toMatchObject({ httpStatus: 404, transient: false });
+      expect(srv.seen).toHaveLength(2);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('transient errors until the deadline end in VerificationTimeoutError', async () => {
+    const srv = await recorder([[200, OK_GUID], [503, 'Service Unavailable']]);
+    try {
+      const p = verifyContract({ address: FORGE_ADDR, buildInfo: forgeBuildInfo(), contract: 'Greeter', explorerUrl: srv.url, pollIntervalMs: 5, timeoutMs: 150 });
+      await expect(p).rejects.toBeInstanceOf(VerificationTimeoutError);
+      await expect(p).rejects.toMatchObject({ guid: GUID, lastStatus: expect.stringContaining('HTTP 503') });
+      expect(srv.seen.length).toBeGreaterThan(2);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('backs off between consecutive transient errors, bounded by transientBackoffMaxMs', async () => {
+    const srv = await recorder([[200, OK_GUID], [503, 'x'], [503, 'x'], [503, 'x'], [503, 'x'], [200, PASS]]);
+    try {
+      await waitForVerification(GUID, { explorerUrl: srv.url, pollIntervalMs: 20, transientBackoffMaxMs: 50, timeoutMs: 5000 });
+      // seen[0] is the 503 answer to the first poll (no submission here); gaps 20, 40, 50 (capped), 50.
+      const gaps = srv.seen.slice(1).map((s, i) => s.at - (srv.seen[i] as Seen).at);
+      expect(gaps).toHaveLength(4);
+      const want = [20, 40, 50, 50];
+      gaps.forEach((g, i) => {
+        expect(g).toBeGreaterThanOrEqual((want[i] as number) - 3);
+        expect(g).toBeLessThan((want[i] as number) + 200);
+      });
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('marks transport failures and 5xx/429 transient, other answers not', async () => {
+    const down = await recorder([[503, 'down']]);
+    const limited = await recorder([[429, 'slow down']]);
+    const gone = await recorder([[RESET, '']]);
+    const odd = await recorder([[200, '{"verified":true}']]);
+    try {
+      await expect(checkVerifyStatus('g', { explorerUrl: down.url })).rejects.toMatchObject({ httpStatus: 503, transient: true });
+      await expect(checkVerifyStatus('g', { explorerUrl: limited.url })).rejects.toMatchObject({ httpStatus: 429, transient: true });
+      await expect(checkVerifyStatus('g', { explorerUrl: gone.url })).rejects.toMatchObject({ transient: true });
+      await expect(checkVerifyStatus('g', { explorerUrl: odd.url })).rejects.toMatchObject({ httpStatus: 200, transient: false });
+    } finally {
+      await Promise.all([down, limited, gone, odd].map((s) => s.close()));
     }
   });
 
