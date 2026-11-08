@@ -44,6 +44,7 @@ Success prints one explicit result such as
 | Identity | `identity.*` | Sign users in with OIDC (PKCE) or Sign-In with Ethereum, verify ID tokens, predict a user's wallet address |
 | Embedded wallet | `aa.*` | Build, sign (passkey or EOA) and submit ERC-4337 user operations for a user's smart account |
 | Entitlements | `entitlements.*` | Turn an identity claim into capabilities (`can(claim, 'gatewayKeys')`) |
+| Contract verification | `verifyContract`, `deployAndVerify` | Verify Solidity source on CitrateScan from forge or hardhat build-info, or deploy and verify in one call |
 | Memory | `memory.*` | Read and write agent memory on a citrate-memories gateway (REST or MCP) |
 | Crypto | `KeyManager`, `CryptoManager`, `ShamirSecretSharing` | Keys, signing, ECDH encryption, hashing, secret sharing |
 | React | `@citratelabs/sdk/react/hooks` | `useCitrateClient`, `useInference`, `useModelDeployment`, `useModelInfo`, `useModelList` |
@@ -142,6 +143,98 @@ const reply = await gw.chatCompletions({
 ```
 
 Also: `listModels()`, `getUsage()`, `health()`. Errors are `gateway.GatewayError` with the HTTP `status`. Point `baseUrl` at a local gateway for development.
+
+### Verifying contracts on CitrateScan
+
+`verifyContract` submits source to CitrateScan, the explorer for chain 40204, through its
+Etherscan-compatible API (`https://explorer.citrate.ai/api`). It sends `verifysourcecode`, polls
+`checkverifystatus`, and resolves when the explorer has recompiled the source and matched it to
+the code on chain. Input is a forge or hardhat build-info, or a solc standard JSON input. Only
+the sources the contract's metadata lists are sent, as forge and hardhat-verify do.
+
+```ts
+import { readFileSync } from 'node:fs';
+import { verifyContract, loadBuildInfo } from '@citratelabs/sdk';
+
+// forge: `forge build --build-info` writes out/build-info/<id>.json with the compiler input.
+const buildInfo = JSON.parse(readFileSync('out/build-info/<id>.json', 'utf8'));
+const result = await verifyContract({
+  chainId: 40204, // optional: sent as Etherscan v2 `chainid`; omit it for a local devnet explorer
+  address: '0xYourContractAddress',
+  buildInfo,
+  contract: 'src/MyContract.sol:MyContract', // or 'MyContract' when the name is unique
+  constructorArgs: '0x…', // optional: the explorer reads them from the creation transaction
+});
+// result.status: 'verified' | 'already_verified'
+
+// hardhat: pass the contract artifact; loadBuildInfo (Node only) follows its .dbg.json.
+const hh = await loadBuildInfo('artifacts/contracts/MyContract.sol/MyContract.json');
+await verifyContract({ chainId: 40204, address: '0xYourContractAddress', buildInfo: hh.buildInfo, contract: hh.contract! });
+```
+
+`deployAndVerify` deploys the contract from the build-info through a `CitrateClient` with a
+private key, using the same signer path and genesis check as every other transaction. It then
+verifies the contract, passing the creation transaction hash. While the explorer has not indexed
+the new contract yet, it retries the submission.
+
+```ts
+import { CitrateClient, deployAndVerify } from '@citratelabs/sdk';
+
+const client = new CitrateClient({ rpcUrl: 'https://rpc.citrate.ai', privateKey: process.env.DEPLOYER_KEY! });
+const { address, txHash, verification } = await deployAndVerify({
+  client,
+  chainId: 40204,
+  buildInfo,
+  contract: 'src/MyContract.sol:MyContract',
+  args: [7n, 'hello'], // ABI-encoded with the contract's ABI from the build-info
+});
+```
+
+Options:
+- `chainId`: optional. When given, it is sent as Etherscan v2 `chainid` on the submission and on
+  every status call. When omitted, no `chainid` is sent, so an explorer for a local devnet with
+  another chain id works. This matches `citrate contract verify --chain-id`.
+- `explorerUrl` (default `https://explorer.citrate.ai/api`), `apiKey` (sent as `apikey`, not
+  required), `compilerVersion` (otherwise read from the contract metadata), `creationTxHash`.
+- `wait: false`: return the guid without polling.
+- `pollIntervalMs` (3000) and `timeoutMs` (300000) for the status polling. A transient error while
+  polling (connection reset, request timeout, HTTP 5xx or 429) does not end the wait: the poll is
+  retried with a backoff that doubles from `pollIntervalMs` up to `transientBackoffMaxMs` (30000),
+  within `timeoutMs`. A 4xx other than 429, or a `Fail` verdict, ends it.
+- `requestTimeoutMs` (60000): each explorer request is aborted after this long.
+- `rateLimitRetries` (3) and `rateLimitBackoffMs` (5000) for `Max rate limit reached`. The explorer
+  takes one submission per 5 s per IP, so `deployAndVerify` also waits at least
+  `rateLimitBackoffMs` between resubmissions while the contract is not indexed yet
+  (`indexTimeoutMs`, default 120000).
+
+`checkVerifyStatus(guid)` and `waitForVerification(guid)` poll a job you submitted earlier; pass
+the same `chainId` (or none) as the submission.
+
+`CitrateClient.deployContract({ data, value?, gasLimit?, receiptTimeoutMs? })` waits at most
+`receiptTimeoutMs` (default 120000) for the receipt and throws a `CitrateError` with code
+`DEPLOY_TIMEOUT` past it, or `DEPLOY_FAILED` when the receipt has status 0.
+
+Errors extend `VerificationError`:
+- `BuildInfoError`: bad input, nothing sent. A plain `forge build` (without `--build-info`) gets
+  this error, with the fix in the message.
+- `VerificationFailedError`: `Fail - Unable to verify`.
+- `VerificationRejectedError`: the explorer's refusal string, e.g. `Unable to locate ContractCode at 0x…`.
+- `VerificationRateLimitedError`: still rate limited after retries.
+- `VerificationTimeoutError`: no verdict yet. The job may still finish.
+- `ExplorerResponseError`: the explorer could not be reached or gave an unexpected answer.
+  `transient` is true for a transport failure, a timeout, HTTP 5xx and 429.
+
+The explorer accepts at most 64 files and 2 MiB, inline content only.
+
+forge and hardhat can verify against the same API directly. Two details matter on chain 40204:
+
+- **forge:** use `--verifier custom --verifier-url https://explorer.citrate.ai/api --verifier-api-key citrate`.
+  With forge 1.5.1, `--verifier etherscan` stops before sending anything ("No known Etherscan API
+  URL for chain `40204`"). `--verifier-api-key` must be present, and any value works.
+- **hardhat-verify:** give `etherscan.apiKey` as a per-network object (`{ citrate: "citrate" }`)
+  with a `customChains` entry for chainId 40204 (`apiURL: "https://explorer.citrate.ai/api"`).
+  With hardhat-verify 2.1.3 a single string `apiKey` switches it to Etherscan's v2 mode, which
+  ignores `customChains` and sends the request to api.etherscan.io.
 
 ### Identity: sign in with OIDC or Ethereum
 
@@ -292,7 +385,7 @@ Two networks can share chain id 40204 (r1005 and r1006 do), so the chain id alon
 
 ## Errors
 
-Every SDK error extends `CitrateError`: `NetworkError`, `WrongNetworkError`, `AuthenticationError`, `ValidationError`, `ModelNotFoundError`, `ModelDeploymentError`, `InferenceError`, `InsufficientFundsError`, `EncryptionError`, `TimeoutError`, `ConfigurationError`, `IPFSError`. Module clients add their own: `gateway.GatewayError`, `memory.MemoryError`, `identity.IdentityError`, `identity.IdTokenError`, `aa.BundlerRpcError`.
+Every SDK error extends `CitrateError`: `NetworkError`, `WrongNetworkError`, `AuthenticationError`, `ValidationError`, `ModelNotFoundError`, `ModelDeploymentError`, `InferenceError`, `InsufficientFundsError`, `EncryptionError`, `TimeoutError`, `ConfigurationError`, `IPFSError`. Module clients add their own: `VerificationError` and its subclasses (see [Verifying contracts](#verifying-contracts-on-citratescan)), `gateway.GatewayError`, `memory.MemoryError`, `identity.IdentityError`, `identity.IdTokenError`, `aa.BundlerRpcError`.
 
 ## For AI agents
 

@@ -6,7 +6,7 @@
  * encryption, access control, and payment systems.
  */
 
-export { CitrateClient } from './client/CitrateClient';
+export { CitrateClient, DEFAULT_DEPLOY_RECEIPT_TIMEOUT_MS } from './client/CitrateClient';
 export { WebSocketClient } from './client/WebSocketClient';
 
 // Types and interfaces
@@ -49,5 +49,25 @@ export * as gateway from './gateway/client';
 // Memory — typed client for a citrate-memories gateway ("git for agents"):
 // OIDC REST (recall/search/neighbors/verify/review/assert/layout) + BYOM MCP.
 export * as memory from './memory/client';
+// Contract source verification on CitrateScan (Etherscan-compatible explorer API).
+export {
+  verifyContract,
+  deployAndVerify,
+  loadBuildInfo,
+  parseBuildInfo,
+  prepareStandardJson,
+  checkVerifyStatus,
+  waitForVerification,
+  VerificationError,
+  BuildInfoError,
+  VerificationRejectedError,
+  VerificationRateLimitedError,
+  VerificationFailedError,
+  VerificationTimeoutError,
+  ExplorerResponseError,
+  DEFAULT_EXPLORER_URL,
+} from './verify';
+export type { VerifyContractParams, DeployAndVerifyParams, DeployAndVerifyResult, VerifyResult, VerifyStatus, BuildInfo, StandardJsonInput, ContractDeployer } from './verify';
+export * as verify from './verify';
 // Compute refund claims — InferenceRouter / ComputeMarketplace / ComputePoolTraining.
 export * as compute from './compute';
