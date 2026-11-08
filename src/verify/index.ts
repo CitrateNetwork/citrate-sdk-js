@@ -91,7 +91,8 @@ export interface ExplorerOptions {
   explorerUrl?: string;
   /** Sent as `apikey`. Verification needs no key. */
   apiKey?: string;
-  /** Etherscan v2 `chainid`; the explorer accepts 40204. */
+  /** Etherscan v2 `chainid`, sent on the submission and every status call when given (CitrateScan
+   * accepts 40204). Omit it for an explorer that serves one chain, e.g. a local devnet. */
   chainId?: number;
   fetch?: VerifyFetch;
   /** Allow a remote plaintext `http://` explorer URL (loopback is always allowed). */
@@ -110,7 +111,6 @@ export interface PollOptions {
 }
 
 export interface VerifyContractParams extends ExplorerOptions, PollOptions {
-  chainId: number;
   address: string;
   /** A forge or hardhat build-info (parsed JSON). */
   buildInfo?: BuildInfo;
@@ -521,7 +521,9 @@ export async function waitForVerification(guid: string, o: ExplorerOptions & Pol
  * `Fail - Unable to verify`, and the other `VerificationError` subclasses otherwise.
  */
 export async function verifyContract(p: VerifyContractParams): Promise<VerifyResult> {
-  if (!Number.isInteger(p.chainId) || p.chainId <= 0) throw new BuildInfoError('chainId must be a positive integer');
+  if (p.chainId !== undefined && (!Number.isInteger(p.chainId) || p.chainId <= 0)) {
+    throw new BuildInfoError('chainId must be a positive integer');
+  }
   const source = p.buildInfo ?? (p.standardJsonInput ? { input: p.standardJsonInput } : undefined);
   if (!source) throw new BuildInfoError('pass buildInfo or standardJsonInput');
   const submission = prepareStandardJson(parseBuildInfo(source), p.contract, p.compilerVersion);
@@ -530,7 +532,7 @@ export async function verifyContract(p: VerifyContractParams): Promise<VerifyRes
     submission,
     ...(p.constructorArgs !== undefined ? { constructorArgs: p.constructorArgs } : {}),
     ...(p.creationTxHash !== undefined ? { creationTxHash: p.creationTxHash } : {}),
-    chainId: p.chainId,
+    ...(p.chainId !== undefined ? { chainId: p.chainId } : {}),
     ...(p.apiKey !== undefined ? { apiKey: p.apiKey } : {}),
   });
   const base = { contractName: submission.contractName, compilerVersion: submission.compilerVersion };
