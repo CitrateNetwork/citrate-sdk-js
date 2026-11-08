@@ -23,6 +23,8 @@ export const DEFAULT_EXPLORER_URL = 'https://explorer.citrate.ai/api';
 /** Explorer limits (CitrateScan docs, "Limits"). */
 export const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 export const MAX_SOURCE_FILES = 64;
+/** Per-request timeout for explorer calls unless `requestTimeoutMs` is given. */
+export const DEFAULT_EXPLORER_REQUEST_TIMEOUT_MS = 60_000;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -83,7 +85,7 @@ export interface VerifyResult {
 
 export type VerifyFetch = (
   url: string,
-  init?: { method?: string; headers?: Record<string, string>; body?: string },
+  init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal },
 ) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
 
 export interface ExplorerOptions {
@@ -95,6 +97,9 @@ export interface ExplorerOptions {
    * accepts 40204). Omit it for an explorer that serves one chain, e.g. a local devnet. */
   chainId?: number;
   fetch?: VerifyFetch;
+  /** Abort each explorer request after this long (default 60000 ms). A timed-out request is a
+   * transient `ExplorerResponseError`. */
+  requestTimeoutMs?: number;
   /** Allow a remote plaintext `http://` explorer URL (loopback is always allowed). */
   allowInsecureHttp?: boolean;
 }
@@ -446,13 +451,19 @@ function fetchOf(o: ExplorerOptions): VerifyFetch {
 }
 
 async function call(o: ExplorerOptions, url: string, init?: Parameters<VerifyFetch>[1]): Promise<Envelope> {
+  const doFetch = fetchOf(o);
   let res: Awaited<ReturnType<VerifyFetch>>;
+  let text: string;
   try {
-    res = await fetchOf(o)(url, init);
+    // The timeout covers the whole exchange, body included.
+    res = await doFetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(o.requestTimeoutMs ?? DEFAULT_EXPLORER_REQUEST_TIMEOUT_MS),
+    });
+    text = await res.text();
   } catch (e) {
     throw new ExplorerResponseError(`could not reach the explorer: ${(e as Error).message}`, undefined, true);
   }
-  const text = await res.text();
   let body: unknown;
   try {
     body = JSON.parse(text);

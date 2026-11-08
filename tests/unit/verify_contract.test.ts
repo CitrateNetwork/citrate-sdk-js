@@ -31,6 +31,7 @@ import {
   DEFAULT_EXPLORER_REQUEST_TIMEOUT_MS,
   type BuildInfo,
   type ContractDeployer,
+  type VerifyFetch,
 } from '../../src/verify';
 
 const FX = join(__dirname, '..', 'fixtures', 'verify');
@@ -480,7 +481,7 @@ describe('verifyContract', () => {
   it('every explorer fetch carries a timeout signal (default 60 s)', async () => {
     expect(DEFAULT_EXPLORER_REQUEST_TIMEOUT_MS).toBe(60_000);
     const signals: unknown[] = [];
-    const fetch: sdk.VerifyFetch = async (_url, init) => {
+    const fetch: VerifyFetch = async (_url, init) => {
       signals.push(init?.signal);
       return { ok: true, status: 200, text: async () => PASS };
     };
