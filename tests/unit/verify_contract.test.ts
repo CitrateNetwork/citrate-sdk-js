@@ -704,6 +704,27 @@ describe('deployAndVerify', () => {
     await expect(ok.deploy()).resolves.toEqual({ address: DEPLOYED, txHash: TX, blockNumber: 7 });
   });
 
+  it('deployContract bounds the receipt wait (120 s default, receiptTimeoutMs) and reports DEPLOY_TIMEOUT', async () => {
+    expect(sdk.DEFAULT_DEPLOY_RECEIPT_TIMEOUT_MS).toBe(120_000);
+    const asked: [number | undefined, number | undefined][] = [];
+    const receipt = { status: 1, contractAddress: DEPLOYED, blockNumber: 7 };
+    const dflt = clientWithReceipt(async (c, t) => (asked.push([c, t]), receipt));
+    await dflt.deploy();
+    const custom = clientWithReceipt(async (c, t) => (asked.push([c, t]), receipt), { receiptTimeoutMs: 50 });
+    await custom.deploy();
+    expect(asked).toEqual([
+      [1, 120_000],
+      [1, 50],
+    ]);
+
+    // What ethers' TransactionResponse.wait does when the timeout passes.
+    const slow = clientWithReceipt(
+      (_c, t) => new Promise((_r, reject) => setTimeout(() => reject(ethers.makeError('wait for transaction timeout', 'TIMEOUT')), t)),
+      { receiptTimeoutMs: 30 },
+    );
+    await expect(slow.deploy()).rejects.toMatchObject({ name: 'CitrateError', code: 'DEPLOY_TIMEOUT', details: { txHash: TX, timeoutMs: 30 } });
+  });
+
   it('CitrateClient provides deployContract and refuses without a wallet', async () => {
     const client = new sdk.CitrateClient({ rpcUrl: 'http://127.0.0.1:1', expectedGenesisHash: null });
     await expect(client.deployContract({ data: '0x6080' })).rejects.toThrow(/Wallet required/);
