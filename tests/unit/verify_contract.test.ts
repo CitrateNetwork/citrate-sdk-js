@@ -673,6 +673,37 @@ describe('deployAndVerify', () => {
     expect(deployer.sent).toHaveLength(0);
   });
 
+  /** A CitrateClient with a key whose wallet.sendTransaction is replaced by a test-only fake. */
+  function clientWithReceipt(wait: (confirms?: number, timeout?: number) => Promise<unknown>, timeouts?: { receiptTimeoutMs?: number }) {
+    const client = new sdk.CitrateClient({
+      rpcUrl: 'http://127.0.0.1:1',
+      expectedGenesisHash: null,
+      privateKey: '0x' + '11'.repeat(32),
+    });
+    const sent: unknown[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (client as any).wallet.sendTransaction = async (tx: unknown) => {
+      sent.push(tx);
+      return { hash: TX, wait };
+    };
+    return { client, sent, deploy: () => client.deployContract({ data: '0x6080', ...(timeouts ?? {}) }) };
+  }
+
+  it('deployContract: a receipt with status != 1 is DEPLOY_FAILED (default suite, no node)', async () => {
+    const reverted = clientWithReceipt(async () => ({ status: 0, contractAddress: DEPLOYED, blockNumber: 7 }));
+    await expect(reverted.deploy()).rejects.toMatchObject({ name: 'CitrateError', code: 'DEPLOY_FAILED', details: { txHash: TX } });
+    expect(reverted.sent).toEqual([{ data: '0x6080' }]);
+
+    const noReceipt = clientWithReceipt(async () => null);
+    await expect(noReceipt.deploy()).rejects.toMatchObject({ code: 'DEPLOY_FAILED' });
+
+    const noAddress = clientWithReceipt(async () => ({ status: 1, contractAddress: null, blockNumber: 7 }));
+    await expect(noAddress.deploy()).rejects.toMatchObject({ code: 'DEPLOY_FAILED', message: expect.stringContaining('no contractAddress') });
+
+    const ok = clientWithReceipt(async () => ({ status: 1, contractAddress: DEPLOYED, blockNumber: 7 }));
+    await expect(ok.deploy()).resolves.toEqual({ address: DEPLOYED, txHash: TX, blockNumber: 7 });
+  });
+
   it('CitrateClient provides deployContract and refuses without a wallet', async () => {
     const client = new sdk.CitrateClient({ rpcUrl: 'http://127.0.0.1:1', expectedGenesisHash: null });
     await expect(client.deployContract({ data: '0x6080' })).rejects.toThrow(/Wallet required/);
