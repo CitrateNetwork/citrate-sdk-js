@@ -256,6 +256,40 @@ export class CitrateClient {
     return this.wallet?.address;
   }
 
+  /**
+   * Deploy an EVM contract: sign and send a creation transaction with this client's wallet,
+   * after the same genesis check every transaction gets, and wait for the receipt.
+   * `data` is the creation code with the ABI-encoded constructor arguments appended.
+   * Data source: `eth_sendRawTransaction` / `eth_getTransactionReceipt` on the configured RPC.
+   * Used by `deployAndVerify`.
+   */
+  async deployContract(params: { data: string; value?: bigint; gasLimit?: bigint }): Promise<{
+    address: string;
+    txHash: string;
+    blockNumber: number;
+  }> {
+    if (!this.wallet) {
+      throw new CitrateError('Wallet required for contract deployment (pass privateKey)');
+    }
+    if (!/^0x[0-9a-fA-F]*$/.test(params.data) || params.data.length <= 2) {
+      throw new ValidationError('deployContract: data must be non-empty 0x-prefixed hex');
+    }
+    await this.verifyNetwork();
+    const tx = await this.wallet.sendTransaction({
+      data: params.data,
+      ...(params.value !== undefined ? { value: params.value } : {}),
+      ...(params.gasLimit !== undefined ? { gasLimit: params.gasLimit } : {}),
+    });
+    const receipt = await tx.wait();
+    if (!receipt || receipt.status !== 1) {
+      throw new CitrateError(`Contract creation failed (tx ${tx.hash})`, 'DEPLOY_FAILED', { txHash: tx.hash });
+    }
+    if (!receipt.contractAddress) {
+      throw new CitrateError(`Receipt has no contractAddress (tx ${tx.hash})`, 'DEPLOY_FAILED', { txHash: tx.hash });
+    }
+    return { address: receipt.contractAddress, txHash: tx.hash, blockNumber: receipt.blockNumber };
+  }
+
   // Model deployment
   async deployModel(
     modelData: ArrayBuffer | Uint8Array,

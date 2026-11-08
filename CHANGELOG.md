@@ -4,6 +4,18 @@ All notable changes to `@citratelabs/sdk` are documented here. This project
 follows [Semantic Versioning](https://semver.org/); while it is 0.x, a patch
 release may carry breaking changes when a security fix requires them.
 
+## [Unreleased]
+
+### Added
+
+- `verifyContract` and `deployAndVerify`: verify Solidity source on CitrateScan through its
+  Etherscan-compatible API (`verifysourcecode`, `checkverifystatus`) from forge or hardhat
+  build-info, or a standard JSON input, with polling and typed errors (`VerificationError` and
+  subclasses). Also `loadBuildInfo`, `parseBuildInfo`, `prepareStandardJson`,
+  `checkVerifyStatus`, `waitForVerification`, and the `verify` namespace.
+- `CitrateClient.deployContract({ data, value?, gasLimit? })`: sign and send a contract-creation
+  transaction after the genesis check.
+
 ## [0.3.0] - 2026-10-27 — r1006 address book and a genesis guard
 
 Held for the r1006 public cutover: publish only after rpc.citrate.ai serves r1006.
