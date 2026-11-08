@@ -247,6 +247,44 @@ describe('verifyContract', () => {
     }
   });
 
+  it('without chainId sends no chainid on the submission or any status call (local devnets)', async () => {
+    const srv = await recorder([[200, OK_GUID], [200, PENDING], [200, PASS]]);
+    try {
+      const r = await verifyContract({
+        address: FORGE_ADDR,
+        buildInfo: forgeBuildInfo(),
+        contract: 'Greeter',
+        explorerUrl: srv.url,
+        apiKey: 'citrate',
+        ...fast,
+      });
+      expect(r.status).toBe('verified');
+      expect(srv.seen).toHaveLength(3);
+      expect(Object.fromEntries(new URLSearchParams((srv.seen[0] as Seen).body))).not.toHaveProperty('chainid');
+      for (const s of srv.seen.slice(1)) {
+        expect(query(s)).toEqual({ apikey: 'citrate', module: 'contract', action: 'checkverifystatus', guid: GUID });
+      }
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('a chainId other than 40204 is sent as given; a non-positive one is refused', async () => {
+    const srv = await recorder([[200, OK_GUID], [200, PASS]]);
+    try {
+      await verifyContract({ chainId: 1337, address: FORGE_ADDR, buildInfo: forgeBuildInfo(), contract: 'Greeter', explorerUrl: srv.url, ...fast });
+      expect(Object.fromEntries(new URLSearchParams((srv.seen[0] as Seen).body)).chainid).toBe('1337');
+      expect(query(srv.seen[1] as Seen).chainid).toBe('1337');
+    } finally {
+      await srv.close();
+    }
+    for (const bad of [0, -1, 1.5]) {
+      await expect(verifyContract({ chainId: bad, address: FORGE_ADDR, buildInfo: forgeBuildInfo(), contract: 'Greeter' })).rejects.toBeInstanceOf(
+        BuildInfoError,
+      );
+    }
+  });
+
   it('sends what hardhat-verify sends (plus chainid and the corrected spelling)', async () => {
     const srv = await recorder([[200, OK_GUID]]);
     try {
@@ -435,6 +473,25 @@ describe('deployAndVerify', () => {
       expect(body.contractname).toBe('src/Greeter.sol:Greeter');
     } finally {
       await srv.close();
+    }
+  });
+
+  it('chainId is optional: omitted sends no chainid, given is sent on submit and every poll', async () => {
+    const without = await recorder([[200, OK_GUID], [200, PENDING], [200, PASS]]);
+    const withId = await recorder([[200, OK_GUID], [200, PENDING], [200, PASS]]);
+    try {
+      await deployAndVerify({ client: recordingDeployer(), buildInfo: forgeBuildInfo(), contract: 'Greeter', args: [1n, 'x'], explorerUrl: without.url, ...fast });
+      expect(without.seen).toHaveLength(3);
+      expect(Object.fromEntries(new URLSearchParams((without.seen[0] as Seen).body))).not.toHaveProperty('chainid');
+      for (const s of without.seen.slice(1)) expect(query(s)).not.toHaveProperty('chainid');
+
+      await deployAndVerify({ client: recordingDeployer(), chainId: 40204, buildInfo: forgeBuildInfo(), contract: 'Greeter', args: [1n, 'x'], explorerUrl: withId.url, ...fast });
+      expect(withId.seen).toHaveLength(3);
+      expect(Object.fromEntries(new URLSearchParams((withId.seen[0] as Seen).body)).chainid).toBe('40204');
+      for (const s of withId.seen.slice(1)) expect(query(s).chainid).toBe('40204');
+    } finally {
+      await without.close();
+      await withId.close();
     }
   });
 
