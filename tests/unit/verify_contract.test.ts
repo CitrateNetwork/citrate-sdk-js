@@ -28,6 +28,7 @@ import {
   VerificationTimeoutError,
   ExplorerResponseError,
   DEFAULT_EXPLORER_URL,
+  DEFAULT_EXPLORER_REQUEST_TIMEOUT_MS,
   type BuildInfo,
   type ContractDeployer,
 } from '../../src/verify';
@@ -445,6 +446,50 @@ describe('verifyContract', () => {
       await expect(checkVerifyStatus('g', { explorerUrl: odd.url })).rejects.toMatchObject({ httpStatus: 200, transient: false });
     } finally {
       await Promise.all([down, limited, gone, odd].map((s) => s.close()));
+    }
+  });
+
+  it('bounds each explorer request with requestTimeoutMs (a hang is a transient error)', async () => {
+    const hang = await recorder([[HANG, '']]);
+    try {
+      const t0 = Date.now();
+      await expect(checkVerifyStatus('g', { explorerUrl: hang.url, requestTimeoutMs: 100 })).rejects.toMatchObject({
+        name: 'ExplorerResponseError',
+        transient: true,
+      });
+      await expect(
+        verifyContract({ address: FORGE_ADDR, buildInfo: forgeBuildInfo(), contract: 'Greeter', explorerUrl: hang.url, requestTimeoutMs: 100, wait: false }),
+      ).rejects.toBeInstanceOf(ExplorerResponseError);
+      expect(Date.now() - t0).toBeLessThan(3000);
+    } finally {
+      await hang.close();
+    }
+  });
+
+  it('a status request that hangs is retried by the wait', async () => {
+    const srv = await recorder([[HANG, ''], [200, PASS]]);
+    try {
+      const s = await waitForVerification(GUID, { explorerUrl: srv.url, requestTimeoutMs: 100, pollIntervalMs: 5, timeoutMs: 5000 });
+      expect(s.state).toBe('verified');
+      expect(srv.seen).toHaveLength(2);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('every explorer fetch carries a timeout signal (default 60 s)', async () => {
+    expect(DEFAULT_EXPLORER_REQUEST_TIMEOUT_MS).toBe(60_000);
+    const signals: unknown[] = [];
+    const fetch: sdk.VerifyFetch = async (_url, init) => {
+      signals.push(init?.signal);
+      return { ok: true, status: 200, text: async () => PASS };
+    };
+    await checkVerifyStatus('g', { fetch });
+    await verifyContract({ address: FORGE_ADDR, buildInfo: forgeBuildInfo(), contract: 'Greeter', fetch, wait: false });
+    expect(signals).toHaveLength(2);
+    for (const sig of signals) {
+      expect(sig).toBeInstanceOf(AbortSignal);
+      expect((sig as AbortSignal).aborted).toBe(false);
     }
   });
 
