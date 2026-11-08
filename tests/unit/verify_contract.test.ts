@@ -417,7 +417,7 @@ describe('verifyContract', () => {
   });
 
   it('backs off between consecutive transient errors, bounded by transientBackoffMaxMs', async () => {
-    const srv = await recorder([[200, OK_GUID], [503, 'x'], [503, 'x'], [503, 'x'], [503, 'x'], [200, PASS]]);
+    const srv = await recorder([[503, 'x'], [503, 'x'], [503, 'x'], [503, 'x'], [200, PASS]]);
     try {
       await waitForVerification(GUID, { explorerUrl: srv.url, pollIntervalMs: 20, transientBackoffMaxMs: 50, timeoutMs: 5000 });
       // seen[0] is the 503 answer to the first poll (no submission here); gaps 20, 40, 50 (capped), 50.

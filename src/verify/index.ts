@@ -108,6 +108,10 @@ export interface PollOptions {
   rateLimitRetries?: number;
   /** Default 5000 ms (one submission per 5 s per IP). */
   rateLimitBackoffMs?: number;
+  /** While polling, a transient error (transport failure, HTTP 5xx or 429) is retried after a
+   * backoff that starts at `pollIntervalMs`, doubles per consecutive error and is capped here.
+   * Default 30000 ms. */
+  transientBackoffMaxMs?: number;
 }
 
 export interface VerifyContractParams extends ExplorerOptions, PollOptions {
@@ -179,10 +183,18 @@ export class VerificationTimeoutError extends VerificationError {
   }
 }
 
-/** The explorer could not be reached, or answered outside the documented envelope. */
+/**
+ * The explorer could not be reached, or answered outside the documented envelope. `transient` is
+ * true for a transport failure (connection reset, timeout) and for HTTP 5xx and 429: worth
+ * retrying later. `waitForVerification` retries those.
+ */
 export class ExplorerResponseError extends VerificationError {
-  constructor(message: string, readonly httpStatus?: number) {
-    super(message, 'VERIFY_EXPLORER_RESPONSE', httpStatus === undefined ? undefined : { httpStatus });
+  constructor(
+    message: string,
+    readonly httpStatus?: number,
+    readonly transient: boolean = false,
+  ) {
+    super(message, 'VERIFY_EXPLORER_RESPONSE', httpStatus === undefined ? { transient } : { httpStatus, transient });
     this.name = 'ExplorerResponseError';
   }
 }
@@ -438,7 +450,7 @@ async function call(o: ExplorerOptions, url: string, init?: Parameters<VerifyFet
   try {
     res = await fetchOf(o)(url, init);
   } catch (e) {
-    throw new ExplorerResponseError(`could not reach the explorer: ${(e as Error).message}`);
+    throw new ExplorerResponseError(`could not reach the explorer: ${(e as Error).message}`, undefined, true);
   }
   const text = await res.text();
   let body: unknown;
@@ -454,7 +466,10 @@ async function call(o: ExplorerOptions, url: string, init?: Parameters<VerifyFet
       result: body.result,
     };
   }
-  if (!res.ok) throw new ExplorerResponseError(`explorer answered HTTP ${res.status}: ${text.slice(0, 300)}`, res.status);
+  if (!res.ok) {
+    const transient = res.status >= 500 || res.status === 429;
+    throw new ExplorerResponseError(`explorer answered HTTP ${res.status}: ${text.slice(0, 300)}`, res.status, transient);
+  }
   throw new ExplorerResponseError(`unexpected explorer answer: ${text.slice(0, 300)}`, res.status);
 }
 
@@ -500,16 +515,35 @@ export async function checkVerifyStatus(guid: string, o: ExplorerOptions = {}): 
   return { state: 'failed', message: text };
 }
 
-/** Poll until `Pass - Verified` (resolves) or `Fail - …` (throws `VerificationFailedError`). */
+/**
+ * Poll until `Pass - Verified` (resolves) or `Fail - …` (throws `VerificationFailedError`).
+ *
+ * A transient `ExplorerResponseError` (transport failure, HTTP 5xx or 429) does not end the wait:
+ * the poll is retried after a backoff that doubles from `pollIntervalMs` up to
+ * `transientBackoffMaxMs`, within `timeoutMs`. Any other error ends it.
+ */
 export async function waitForVerification(guid: string, o: ExplorerOptions & PollOptions = {}): Promise<VerifyStatus> {
   const interval = o.pollIntervalMs ?? 3000;
+  const backoffMax = o.transientBackoffMaxMs ?? 30_000;
   const deadline = Date.now() + (o.timeoutMs ?? 300_000);
+  let transientErrors = 0;
   for (;;) {
-    const s = await checkVerifyStatus(guid, o);
-    if (s.state === 'verified') return s;
-    if (s.state === 'failed') throw new VerificationFailedError(guid, s.message);
-    if (Date.now() + interval > deadline) throw new VerificationTimeoutError(guid, s.message);
-    await sleep(interval);
+    let delay = interval;
+    let last: string;
+    try {
+      const s = await checkVerifyStatus(guid, o);
+      if (s.state === 'verified') return s;
+      if (s.state === 'failed') throw new VerificationFailedError(guid, s.message);
+      transientErrors = 0;
+      last = s.message;
+    } catch (e) {
+      if (!(e instanceof ExplorerResponseError) || !e.transient) throw e;
+      transientErrors++;
+      delay = Math.min(interval * 2 ** (transientErrors - 1), Math.max(backoffMax, interval));
+      last = e.message;
+    }
+    if (Date.now() + delay > deadline) throw new VerificationTimeoutError(guid, last);
+    await sleep(delay);
   }
 }
 
