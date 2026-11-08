@@ -629,7 +629,8 @@ export interface DeployAndVerifyResult {
  * The creation code is the build-info's `evm.bytecode.object` (unlinked libraries are refused)
  * followed by the constructor arguments. The creation transaction hash is passed to the
  * explorer. While the explorer answers `Unable to locate ContractCode` (not indexed yet), the
- * submission is retried until `indexTimeoutMs`.
+ * submission is retried until `indexTimeoutMs`, waiting the larger of `pollIntervalMs` and
+ * `rateLimitBackoffMs` between submissions.
  */
 export async function deployAndVerify(p: DeployAndVerifyParams): Promise<DeployAndVerifyResult> {
   if (!p.buildInfo) throw new BuildInfoError('deployAndVerify needs buildInfo (it carries the bytecode)');
@@ -670,7 +671,8 @@ export async function deployAndVerify(p: DeployAndVerifyParams): Promise<DeployA
     } catch (e) {
       const notIndexed = e instanceof VerificationRejectedError && /unable to locate contractcode/i.test(e.result);
       if (!notIndexed || Date.now() >= indexDeadline) throw e;
-      await sleep(p.pollIntervalMs ?? 3000);
+      // A resubmission is a verifysourcecode POST: the explorer takes one per 5 s per IP.
+      await sleep(Math.max(p.pollIntervalMs ?? 3000, p.rateLimitBackoffMs ?? 5000));
     }
   }
 }
