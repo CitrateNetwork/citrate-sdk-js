@@ -159,7 +159,7 @@ import { verifyContract, loadBuildInfo } from '@citratelabs/sdk';
 // forge: `forge build --build-info` writes out/build-info/<id>.json with the compiler input.
 const buildInfo = JSON.parse(readFileSync('out/build-info/<id>.json', 'utf8'));
 const result = await verifyContract({
-  chainId: 40204,
+  chainId: 40204, // optional: sent as Etherscan v2 `chainid`; omit it for a local devnet explorer
   address: '0xYourContractAddress',
   buildInfo,
   contract: 'src/MyContract.sol:MyContract', // or 'MyContract' when the name is unique
@@ -190,10 +190,29 @@ const { address, txHash, verification } = await deployAndVerify({
 });
 ```
 
-Options: `explorerUrl` (default `https://explorer.citrate.ai/api`), `apiKey` (sent as `apikey`,
-not required), `compilerVersion` (otherwise read from the contract metadata), `creationTxHash`,
-`wait: false` (return the guid without polling), `pollIntervalMs` (3000), `timeoutMs` (300000).
-`checkVerifyStatus(guid)` and `waitForVerification(guid)` poll a job you submitted earlier.
+Options:
+- `chainId`: optional. When given, it is sent as Etherscan v2 `chainid` on the submission and on
+  every status call. When omitted, no `chainid` is sent, so an explorer for a local devnet with
+  another chain id works. This matches `citrate contract verify --chain-id`.
+- `explorerUrl` (default `https://explorer.citrate.ai/api`), `apiKey` (sent as `apikey`, not
+  required), `compilerVersion` (otherwise read from the contract metadata), `creationTxHash`.
+- `wait: false`: return the guid without polling.
+- `pollIntervalMs` (3000) and `timeoutMs` (300000) for the status polling. A transient error while
+  polling (connection reset, request timeout, HTTP 5xx or 429) does not end the wait: the poll is
+  retried with a backoff that doubles from `pollIntervalMs` up to `transientBackoffMaxMs` (30000),
+  within `timeoutMs`. A 4xx other than 429, or a `Fail` verdict, ends it.
+- `requestTimeoutMs` (60000): each explorer request is aborted after this long.
+- `rateLimitRetries` (3) and `rateLimitBackoffMs` (5000) for `Max rate limit reached`. The explorer
+  takes one submission per 5 s per IP, so `deployAndVerify` also waits at least
+  `rateLimitBackoffMs` between resubmissions while the contract is not indexed yet
+  (`indexTimeoutMs`, default 120000).
+
+`checkVerifyStatus(guid)` and `waitForVerification(guid)` poll a job you submitted earlier; pass
+the same `chainId` (or none) as the submission.
+
+`CitrateClient.deployContract({ data, value?, gasLimit?, receiptTimeoutMs? })` waits at most
+`receiptTimeoutMs` (default 120000) for the receipt and throws a `CitrateError` with code
+`DEPLOY_TIMEOUT` past it, or `DEPLOY_FAILED` when the receipt has status 0.
 
 Errors extend `VerificationError`:
 - `BuildInfoError`: bad input, nothing sent. A plain `forge build` (without `--build-info`) gets
@@ -203,6 +222,7 @@ Errors extend `VerificationError`:
 - `VerificationRateLimitedError`: still rate limited after retries.
 - `VerificationTimeoutError`: no verdict yet. The job may still finish.
 - `ExplorerResponseError`: the explorer could not be reached or gave an unexpected answer.
+  `transient` is true for a transport failure, a timeout, HTTP 5xx and 429.
 
 The explorer accepts at most 64 files and 2 MiB, inline content only.
 

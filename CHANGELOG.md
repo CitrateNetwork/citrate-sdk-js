@@ -13,8 +13,16 @@ release may carry breaking changes when a security fix requires them.
   build-info, or a standard JSON input, with polling and typed errors (`VerificationError` and
   subclasses). Also `loadBuildInfo`, `parseBuildInfo`, `prepareStandardJson`,
   `checkVerifyStatus`, `waitForVerification`, and the `verify` namespace.
-- `CitrateClient.deployContract({ data, value?, gasLimit? })`: sign and send a contract-creation
-  transaction after the genesis check.
+- `CitrateClient.deployContract({ data, value?, gasLimit?, receiptTimeoutMs? })`: sign and send a
+  contract-creation transaction after the genesis check, and wait at most `receiptTimeoutMs`
+  (default 120 s, `DEFAULT_DEPLOY_RECEIPT_TIMEOUT_MS`) for the receipt (`DEPLOY_TIMEOUT` past it,
+  `DEPLOY_FAILED` on a status-0 receipt).
+- Verification details: `chainId` is optional (sent as `chainid` on the submission and every
+  status call only when given, as `citrate contract verify --chain-id`); transient explorer errors
+  (transport, timeout, HTTP 5xx and 429) are retried while waiting, with a backoff capped by
+  `transientBackoffMaxMs`, and flagged by `ExplorerResponseError.transient`; each explorer request
+  has a timeout (`requestTimeoutMs`, default 60 s); not-indexed resubmissions wait at least
+  `rateLimitBackoffMs`.
 
 ## [0.3.0] - 2026-10-27 — r1006 address book and a genesis guard
 
