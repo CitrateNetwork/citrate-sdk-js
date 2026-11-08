@@ -636,6 +636,30 @@ describe('deployAndVerify', () => {
     }
   });
 
+  it('waits at least the rate-limit backoff between not-indexed resubmissions', async () => {
+    const notYet = JSON.stringify({ status: '0', message: 'NOTOK', result: `Unable to locate ContractCode at ${DEPLOYED}` });
+    const srv = await recorder([[200, notYet], [200, notYet], [200, OK_GUID], [200, PASS]]);
+    try {
+      await deployAndVerify({
+        client: recordingDeployer(),
+        buildInfo: forgeBuildInfo(),
+        contract: 'Greeter',
+        args: [1n, 'x'],
+        explorerUrl: srv.url,
+        pollIntervalMs: 5,
+        rateLimitBackoffMs: 150,
+        timeoutMs: 5000,
+      });
+      const posts = srv.seen.filter((s) => s.method === 'POST');
+      expect(posts).toHaveLength(3);
+      for (let i = 1; i < posts.length; i++) {
+        expect((posts[i] as Seen).at - (posts[i - 1] as Seen).at).toBeGreaterThanOrEqual(147);
+      }
+    } finally {
+      await srv.close();
+    }
+  });
+
   it('refuses bad inputs before deploying anything', async () => {
     const deployer = recordingDeployer();
     await expect(deployAndVerify({ client: deployer, chainId: 40204, contract: 'Greeter' })).rejects.toBeInstanceOf(BuildInfoError);
