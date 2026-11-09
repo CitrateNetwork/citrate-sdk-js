@@ -6,6 +6,13 @@ release may carry breaking changes when a security fix requires them.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-08 — contract verification on CitrateScan
+
+Minor release: new API only, nothing removed or changed in an incompatible way. Publish once the
+CitrateScan verify API (v2) serves `verifysourcecode` / `checkverifystatus` at
+`DEFAULT_EXPLORER_URL`. The deprecated shim `@citratelabs/citrate-js` 0.4.0 re-exports this
+version.
+
 ### Added
 
 - `verifyContract` and `deployAndVerify`: verify Solidity source on CitrateScan through its
@@ -23,6 +30,18 @@ release may carry breaking changes when a security fix requires them.
   `transientBackoffMaxMs`, and flagged by `ExplorerResponseError.transient`; each explorer request
   has a timeout (`requestTimeoutMs`, default 60 s); not-indexed resubmissions wait at least
   `rateLimitBackoffMs`.
+
+### Fixed (review follow-ups, #41)
+
+- `deployContract`: a reverted creation is `DEPLOY_FAILED` (with `txHash` and `blockNumber`).
+  ethers 6 `tx.wait` throws `CALL_EXCEPTION` with the receipt on a status-0 receipt, so the
+  status check after the wait was never reached and callers got the raw ethers error.
+- `deployAndVerify` passes `receiptTimeoutMs` to `deployContract`.
+- `waitForVerification`: the transient backoff exponent is clamped (`transientBackoffDelay`) and
+  `pollIntervalMs` is at least `MIN_POLL_INTERVAL_MS` (5 ms), so `pollIntervalMs: 0` no longer
+  retries in a tight loop and the delay can no longer become `NaN` after 1024 consecutive errors.
+  A status request in flight at the `timeoutMs` deadline is cut off there instead of running up to
+  `requestTimeoutMs` past it.
 
 ## [0.3.0] - 2026-10-27 — r1006 address book and a genesis guard
 
