@@ -435,6 +435,49 @@ describe('verifyContract', () => {
     }
   });
 
+  it('pollIntervalMs 0 still backs off on transient errors (no tight retry loop)', async () => {
+    let calls = 0;
+    const fetch: VerifyFetch = async () => {
+      calls++;
+      throw new Error('ECONNRESET');
+    };
+    const t0 = Date.now();
+    const p = waitForVerification(GUID, { fetch, pollIntervalMs: 0, transientBackoffMaxMs: 1000, timeoutMs: 300 });
+    await expect(p).rejects.toBeInstanceOf(VerificationTimeoutError);
+    // Floor MIN_POLL_INTERVAL_MS (5) doubling: 5, 10, 20, 40, 80, 160 fits ~300 ms in about 7 calls.
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(calls).toBeLessThan(12);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(sdk.verify.MIN_POLL_INTERVAL_MS).toBe(5);
+  });
+
+  it('transientBackoffDelay is finite and capped for any error count and interval', () => {
+    const { transientBackoffDelay } = sdk.verify;
+    expect(transientBackoffDelay(20, 1, 50)).toBe(20);
+    expect(transientBackoffDelay(20, 2, 50)).toBe(40);
+    expect(transientBackoffDelay(20, 3, 50)).toBe(50);
+    for (const n of [1, 30, 1024, 1025, 5000, Number.MAX_SAFE_INTEGER]) {
+      for (const interval of [0, 1, 3000]) {
+        const d = transientBackoffDelay(interval, n, 30_000);
+        expect(Number.isFinite(d)).toBe(true);
+        expect(d).toBeGreaterThanOrEqual(sdk.verify.MIN_POLL_INTERVAL_MS);
+        expect(d).toBeLessThanOrEqual(Math.max(30_000, interval));
+      }
+    }
+  });
+
+  it('an in-flight status request cannot overrun timeoutMs by requestTimeoutMs', async () => {
+    const hang = await recorder([[HANG, '']]);
+    try {
+      const t0 = Date.now();
+      const p = waitForVerification(GUID, { explorerUrl: hang.url, pollIntervalMs: 5, timeoutMs: 200, requestTimeoutMs: 60_000 });
+      await expect(p).rejects.toBeInstanceOf(VerificationTimeoutError);
+      expect(Date.now() - t0).toBeLessThan(2000);
+    } finally {
+      await hang.close();
+    }
+  }, 10_000);
+
   it('marks transport failures and 5xx/429 transient, other answers not', async () => {
     const down = await recorder([[503, 'down']]);
     const limited = await recorder([[429, 'slow down']]);
@@ -572,8 +615,8 @@ describe('deployAndVerify', () => {
   const TX = `0x${'ab'.repeat(32)}`;
 
   /** Test-only deployer that records what it was asked to send. */
-  function recordingDeployer(): ContractDeployer & { sent: { data: string; value?: bigint; gasLimit?: bigint }[] } {
-    const sent: { data: string; value?: bigint; gasLimit?: bigint }[] = [];
+  function recordingDeployer(): ContractDeployer & { sent: { data: string; value?: bigint; gasLimit?: bigint; receiptTimeoutMs?: number }[] } {
+    const sent: { data: string; value?: bigint; gasLimit?: bigint; receiptTimeoutMs?: number }[] = [];
     return {
       sent,
       deployContract: async (p) => {
@@ -621,6 +664,30 @@ describe('deployAndVerify', () => {
     } finally {
       await without.close();
       await withId.close();
+    }
+  });
+
+  it('passes receiptTimeoutMs, value and gasLimit through to deployContract', async () => {
+    const srv = await recorder([[200, OK_GUID], [200, PASS]]);
+    try {
+      const deployer = recordingDeployer();
+      await deployAndVerify({
+        client: deployer,
+        buildInfo: forgeBuildInfo(),
+        contract: 'Greeter',
+        args: [1n, 'x'],
+        value: 3n,
+        gasLimit: 900_000n,
+        receiptTimeoutMs: 45_000,
+        explorerUrl: srv.url,
+        ...fast,
+      });
+      expect(deployer.sent).toHaveLength(1);
+      expect(deployer.sent[0]).toMatchObject({ value: 3n, gasLimit: 900_000n, receiptTimeoutMs: 45_000 });
+      // Not a verify parameter: it never reaches the explorer.
+      expect(JSON.stringify(srv.seen)).not.toContain('receiptTimeoutMs');
+    } finally {
+      await srv.close();
     }
   });
 
@@ -689,10 +756,39 @@ describe('deployAndVerify', () => {
     return { client, sent, deploy: () => client.deployContract({ data: '0x6080', ...(timeouts ?? {}) }) };
   }
 
-  it('deployContract: a receipt with status != 1 is DEPLOY_FAILED (default suite, no node)', async () => {
-    const reverted = clientWithReceipt(async () => ({ status: 0, contractAddress: DEPLOYED, blockNumber: 7 }));
-    await expect(reverted.deploy()).rejects.toMatchObject({ name: 'CitrateError', code: 'DEPLOY_FAILED', details: { txHash: TX } });
+  /** What ethers 6.17 TransactionResponse.wait does on a status-0 receipt (providers/provider.ts checkReceipt). */
+  const revertedWait = (receipt: Record<string, unknown>) => async () => {
+    throw ethers.makeError('transaction execution reverted', 'CALL_EXCEPTION', {
+      action: 'sendTransaction',
+      data: null,
+      reason: null,
+      invocation: null,
+      revert: null,
+      transaction: { to: null, from: '0x' + '22'.repeat(20), data: '' },
+      receipt: receipt as unknown as ethers.TransactionReceipt,
+    });
+  };
+
+  it('deployContract: a reverted creation (ethers CALL_EXCEPTION with a receipt) is DEPLOY_FAILED', async () => {
+    const reverted = clientWithReceipt(revertedWait({ status: 0, contractAddress: DEPLOYED, blockNumber: 7 }));
+    const err = await reverted.deploy().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(sdk.CitrateError);
+    expect(err).toMatchObject({ name: 'CitrateError', code: 'DEPLOY_FAILED', details: { txHash: TX, blockNumber: 7 } });
+    expect((err as Error).message).toMatch(/reverted/);
     expect(reverted.sent).toEqual([{ data: '0x6080' }]);
+
+    // A CALL_EXCEPTION without a receipt (e.g. a failed estimateGas) is not a mined revert: passed through.
+    const noReceiptCall = clientWithReceipt(async () => {
+      throw ethers.makeError('missing revert data', 'CALL_EXCEPTION', {
+        action: 'estimateGas', data: null, reason: null, invocation: null, revert: null,
+        transaction: { to: null, data: '0x6080' },
+      });
+    });
+    await expect(noReceiptCall.deploy()).rejects.toMatchObject({ code: 'CALL_EXCEPTION' });
+
+    // A status-0 receipt returned without throwing (a wait() that does not check) is DEPLOY_FAILED too.
+    const statusZero = clientWithReceipt(async () => ({ status: 0, contractAddress: DEPLOYED, blockNumber: 7 }));
+    await expect(statusZero.deploy()).rejects.toMatchObject({ name: 'CitrateError', code: 'DEPLOY_FAILED', details: { txHash: TX } });
 
     const noReceipt = clientWithReceipt(async () => null);
     await expect(noReceipt.deploy()).rejects.toMatchObject({ code: 'DEPLOY_FAILED' });

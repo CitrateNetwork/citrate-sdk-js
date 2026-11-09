@@ -200,8 +200,10 @@ Options:
 - `pollIntervalMs` (3000) and `timeoutMs` (300000) for the status polling. A transient error while
   polling (connection reset, request timeout, HTTP 5xx or 429) does not end the wait: the poll is
   retried with a backoff that doubles from `pollIntervalMs` up to `transientBackoffMaxMs` (30000),
-  within `timeoutMs`. A 4xx other than 429, or a `Fail` verdict, ends it.
-- `requestTimeoutMs` (60000): each explorer request is aborted after this long.
+  within `timeoutMs`. A 4xx other than 429, or a `Fail` verdict, ends it. `pollIntervalMs` is at
+  least `MIN_POLL_INTERVAL_MS` (5), so 0 does not retry in a tight loop.
+- `requestTimeoutMs` (60000): each explorer request is aborted after this long, or at the
+  `timeoutMs` deadline while waiting, whichever comes first.
 - `rateLimitRetries` (3) and `rateLimitBackoffMs` (5000) for `Max rate limit reached`. The explorer
   takes one submission per 5 s per IP, so `deployAndVerify` also waits at least
   `rateLimitBackoffMs` between resubmissions while the contract is not indexed yet
@@ -212,7 +214,10 @@ the same `chainId` (or none) as the submission.
 
 `CitrateClient.deployContract({ data, value?, gasLimit?, receiptTimeoutMs? })` waits at most
 `receiptTimeoutMs` (default 120000) for the receipt and throws a `CitrateError` with code
-`DEPLOY_TIMEOUT` past it, or `DEPLOY_FAILED` when the receipt has status 0.
+`DEPLOY_TIMEOUT` past it, or `DEPLOY_FAILED` (with `details.txHash` and `details.blockNumber`)
+when the creation reverts. ethers 6 reports a reverted transaction (status-0 receipt) as a
+`CALL_EXCEPTION` from `tx.wait`; `deployContract` turns that into `DEPLOY_FAILED`.
+`deployAndVerify` passes `receiptTimeoutMs`, `value` and `gasLimit` to `deployContract`.
 
 Errors extend `VerificationError`:
 - `BuildInfoError`: bad input, nothing sent. A plain `forge build` (without `--build-info`) gets

@@ -26,6 +26,24 @@ export const MAX_SOURCE_FILES = 64;
 /** Per-request timeout for explorer calls unless `requestTimeoutMs` is given. */
 export const DEFAULT_EXPLORER_REQUEST_TIMEOUT_MS = 60_000;
 
+/** Shortest wait between two status polls, whatever `pollIntervalMs` says (0 would retry in a
+ * tight loop). */
+export const MIN_POLL_INTERVAL_MS = 5;
+
+/** The doubling stops here; 2^30 times any interval already exceeds every sensible cap. */
+const MAX_BACKOFF_EXPONENT = 30;
+
+/**
+ * The wait after the `transientErrors`-th consecutive transient error: `pollIntervalMs` (at least
+ * `MIN_POLL_INTERVAL_MS`) doubled per error, capped at `transientBackoffMaxMs` (or the interval,
+ * if larger). The exponent is clamped, so the result is finite for any error count.
+ */
+export function transientBackoffDelay(pollIntervalMs: number, transientErrors: number, transientBackoffMaxMs: number): number {
+  const base = Math.max(pollIntervalMs, MIN_POLL_INTERVAL_MS);
+  const exponent = Math.min(Math.max(transientErrors - 1, 0), MAX_BACKOFF_EXPONENT);
+  return Math.min(base * 2 ** exponent, Math.max(transientBackoffMaxMs, base));
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -105,7 +123,7 @@ export interface ExplorerOptions {
 }
 
 export interface PollOptions {
-  /** Default 3000 ms. */
+  /** Default 3000 ms; at least `MIN_POLL_INTERVAL_MS` (5 ms). */
   pollIntervalMs?: number;
   /** Default 300000 ms (compiles may take 120 s, plus queue time). */
   timeoutMs?: number;
@@ -531,18 +549,23 @@ export async function checkVerifyStatus(guid: string, o: ExplorerOptions = {}): 
  *
  * A transient `ExplorerResponseError` (transport failure, HTTP 5xx or 429) does not end the wait:
  * the poll is retried after a backoff that doubles from `pollIntervalMs` up to
- * `transientBackoffMaxMs`, within `timeoutMs`. Any other error ends it.
+ * `transientBackoffMaxMs` (see `transientBackoffDelay`), within `timeoutMs`. Any other error
+ * ends it. Each status request is also bounded by the time left before `timeoutMs`.
  */
 export async function waitForVerification(guid: string, o: ExplorerOptions & PollOptions = {}): Promise<VerifyStatus> {
-  const interval = o.pollIntervalMs ?? 3000;
+  const interval = Math.max(o.pollIntervalMs ?? 3000, MIN_POLL_INTERVAL_MS);
   const backoffMax = o.transientBackoffMaxMs ?? 30_000;
   const deadline = Date.now() + (o.timeoutMs ?? 300_000);
+  const requestTimeout = o.requestTimeoutMs ?? DEFAULT_EXPLORER_REQUEST_TIMEOUT_MS;
   let transientErrors = 0;
+  let last: string | undefined;
   for (;;) {
     let delay = interval;
-    let last: string;
+    // A request still in flight at the deadline is cut off there, not requestTimeoutMs later.
+    const remaining = Math.max(deadline - Date.now(), 1);
+    const cappedByDeadline = remaining < requestTimeout;
     try {
-      const s = await checkVerifyStatus(guid, o);
+      const s = await checkVerifyStatus(guid, { ...o, requestTimeoutMs: cappedByDeadline ? remaining : requestTimeout });
       if (s.state === 'verified') return s;
       if (s.state === 'failed') throw new VerificationFailedError(guid, s.message);
       transientErrors = 0;
@@ -550,8 +573,9 @@ export async function waitForVerification(guid: string, o: ExplorerOptions & Pol
     } catch (e) {
       if (!(e instanceof ExplorerResponseError) || !e.transient) throw e;
       transientErrors++;
-      delay = Math.min(interval * 2 ** (transientErrors - 1), Math.max(backoffMax, interval));
-      last = e.message;
+      delay = transientBackoffDelay(interval, transientErrors, backoffMax);
+      // Cut off at the deadline: report the last status the explorer gave, if it gave one.
+      if (!(cappedByDeadline && Date.now() >= deadline && last !== undefined)) last = e.message;
     }
     if (Date.now() + delay > deadline) throw new VerificationTimeoutError(guid, last);
     await sleep(delay);
@@ -601,7 +625,7 @@ export async function verifyContract(p: VerifyContractParams): Promise<VerifyRes
 
 /** What `deployAndVerify` needs from a client; `CitrateClient` provides it. */
 export interface ContractDeployer {
-  deployContract(p: { data: string; value?: bigint; gasLimit?: bigint }): Promise<{ address: string; txHash: string }>;
+  deployContract(p: { data: string; value?: bigint; gasLimit?: bigint; receiptTimeoutMs?: number }): Promise<{ address: string; txHash: string }>;
 }
 
 export interface DeployAndVerifyParams extends Omit<VerifyContractParams, 'address' | 'constructorArgs' | 'creationTxHash'> {
@@ -613,6 +637,8 @@ export interface DeployAndVerifyParams extends Omit<VerifyContractParams, 'addre
   constructorArgs?: string;
   value?: bigint;
   gasLimit?: bigint;
+  /** How long `deployContract` waits for the creation receipt (`CitrateClient` default 120000 ms). */
+  receiptTimeoutMs?: number;
   /** How long to retry while the explorer has not indexed the new contract. Default 120000 ms. */
   indexTimeoutMs?: number;
 }
@@ -653,9 +679,10 @@ export async function deployAndVerify(p: DeployAndVerifyParams): Promise<DeployA
     data,
     ...(p.value !== undefined ? { value: p.value } : {}),
     ...(p.gasLimit !== undefined ? { gasLimit: p.gasLimit } : {}),
+    ...(p.receiptTimeoutMs !== undefined ? { receiptTimeoutMs: p.receiptTimeoutMs } : {}),
   });
 
-  const { client: _c, args: _a, value: _v, gasLimit: _g, indexTimeoutMs, ...verifyParams } = p;
+  const { client: _c, args: _a, value: _v, gasLimit: _g, receiptTimeoutMs: _r, indexTimeoutMs, ...verifyParams } = p;
   const params: VerifyContractParams = {
     ...verifyParams,
     contract: `${path}:${name}`,

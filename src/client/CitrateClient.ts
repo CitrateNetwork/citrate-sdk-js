@@ -264,7 +264,8 @@ export class CitrateClient {
    * `data` is the creation code with the ABI-encoded constructor arguments appended.
    * The receipt wait is bounded by `receiptTimeoutMs` (default
    * `DEFAULT_DEPLOY_RECEIPT_TIMEOUT_MS`, 120 s); past it the call throws `DEPLOY_TIMEOUT` with the
-   * tx hash (the transaction may still be mined later).
+   * tx hash (the transaction may still be mined later). A reverted creation (status-0 receipt,
+   * which ethers reports as `CALL_EXCEPTION`) throws `DEPLOY_FAILED` with the tx hash and block.
    * Data source: `eth_sendRawTransaction` / `eth_getTransactionReceipt` on the configured RPC.
    * Used by `deployAndVerify`.
    */
@@ -294,6 +295,13 @@ export class CitrateClient {
         throw new CitrateError(`No receipt for contract creation within ${timeoutMs} ms (tx ${tx.hash})`, 'DEPLOY_TIMEOUT', {
           txHash: tx.hash,
           timeoutMs,
+        });
+      }
+      // ethers 6 wait() throws CALL_EXCEPTION, carrying the receipt, when the receipt has status 0.
+      if (ethers.isError(e, 'CALL_EXCEPTION') && e.receipt) {
+        throw new CitrateError(`Contract creation reverted (tx ${tx.hash})`, 'DEPLOY_FAILED', {
+          txHash: tx.hash,
+          blockNumber: e.receipt.blockNumber,
         });
       }
       throw e;
