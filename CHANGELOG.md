@@ -6,6 +6,13 @@ release may carry breaking changes when a security fix requires them.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-08 — contract verification on CitrateScan
+
+Minor release: new API only, nothing removed or changed in an incompatible way. Publish once the
+CitrateScan verify API (v2) serves `verifysourcecode` / `checkverifystatus` at
+`DEFAULT_EXPLORER_URL`. The deprecated shim `@citratelabs/citrate-js` 0.4.0 re-exports this
+version.
+
 ### Added
 
 - `verifyContract` and `deployAndVerify`: verify Solidity source on CitrateScan through its
