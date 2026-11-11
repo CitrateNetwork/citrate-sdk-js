@@ -26,6 +26,16 @@ export interface StreamingInferenceOptions {
   temperature?: number;
 }
 
+/** 16 random bytes from Web Crypto as lowercase hex. Fails closed if absent. */
+function randomStreamToken(): string {
+  const c = (globalThis as { crypto?: Crypto }).crypto;
+  if (!c || typeof c.getRandomValues !== 'function') {
+    throw new CitrateError('WebSocketClient requires Web Crypto getRandomValues for stream IDs');
+  }
+  const bytes = c.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export class WebSocketClient extends EventEmitter {
   private ws: WebSocket | null = null;
   private config: Required<WebSocketClientConfig>;
@@ -183,7 +193,10 @@ export class WebSocketClient extends EventEmitter {
       throw new CitrateError('WebSocket not connected');
     }
 
-    const streamId = `stream_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    // Events are routed to this stream's callbacks by streamId, so the ID must
+    // be unique per stream and not guessable: 128 bits from Web Crypto, never
+    // the clock or Math.random.
+    const streamId = `stream_${randomStreamToken()}`;
 
     // Set up event listeners for this stream
     const handlePartialResult = (data: any) => {
