@@ -61,6 +61,46 @@ describe('SJS-B-006 — prod transitive advisories pinned out via overrides', ()
   });
 });
 
+describe('dev-toolchain advisory floors (esbuild via tsup)', () => {
+  // esbuild < 0.28.1 carries a dev-server file-read advisory (low,
+  // dev-only). tsup 8.x asks for esbuild ^0.27, so the floor is held by
+  // an npm `overrides` entry; a plain `npm audit` must stay clean.
+  const root = path.join(__dirname, '../..');
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+  const pkgs: Record<string, { version?: string }> = lock.packages ?? {};
+
+  test('package.json overrides esbuild to >= 0.28.1', () => {
+    expect(pkg.overrides?.esbuild).toBeDefined();
+    expect(semverGte(pkg.overrides.esbuild, '0.28.1')).toBe(true);
+  });
+
+  test('every esbuild in the lockfile resolves to >= 0.28.1', () => {
+    const versions = Object.entries(pkgs)
+      .filter(([p]) => p.endsWith('node_modules/esbuild'))
+      .map(([, v]) => v.version)
+      .filter((v): v is string => typeof v === 'string');
+    expect(versions.length).toBeGreaterThan(0);
+    for (const v of versions) expect(semverGte(v, '0.28.1')).toBe(true);
+  });
+
+  test('platform binaries match the resolved esbuild version', () => {
+    const main = pkgs['node_modules/esbuild']?.version;
+    expect(main).toBeDefined();
+    const platform = Object.entries(pkgs).filter(([p]) =>
+      /node_modules\/@esbuild\/[^/]+$/.test(p),
+    );
+    expect(platform.length).toBeGreaterThan(0);
+    for (const [, v] of platform) expect(v.version).toBe(main);
+  });
+
+  test('negative control: the floor check rejects the advisory range', () => {
+    expect(semverGte('0.27.7', '0.28.1')).toBe(false);
+    expect(semverGte('0.28.0', '0.28.1')).toBe(false);
+    expect(semverGte('0.28.1', '0.28.1')).toBe(true);
+  });
+});
+
 describe('RM-G2.6 — CryptoManager (Web Crypto only)', () => {
   const cm = new CryptoManager();
 
