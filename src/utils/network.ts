@@ -2,9 +2,9 @@
  * Network guard: refuse an RPC whose block 0 is not the genesis this SDK's address book
  * was generated for.
  *
- * r1005 and r1006 share chain id 40204, so `eth_chainId` cannot tell them apart. The
+ * r1005, r1006 and r1007 share chain id 40204, so `eth_chainId` cannot tell them apart. The
  * vendored federation artifact carries `chain.genesisHash` (citrate-chain
- * core/consensus/src/hardening.rs `R1006_GENESIS`), and every path that pairs a book
+ * core/consensus/src/hardening.rs `R1007_GENESIS` today), and every path that pairs a book
  * address with an RPC reads block 0 first.
  *
  * Data source: `eth_getBlockByNumber(0)` on the caller's RPC (ethers `getBlock(0)`).
@@ -14,7 +14,7 @@ import { FEDERATION_CONTRACT } from '../generated/contract';
 
 const HASH_RE = /^0x[0-9a-f]{64}$/;
 
-/** Block-0 hash of the network the vendored address book describes (r1006). */
+/** Block-0 hash of the network the vendored address book describes (r1007 today). */
 export const EXPECTED_GENESIS_HASH: string = FEDERATION_CONTRACT.chain.genesisHash.toLowerCase();
 
 /* istanbul ignore next — build-time invariant */

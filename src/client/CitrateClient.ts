@@ -75,7 +75,7 @@ export interface CitrateClientConfig {
   allowInsecureHttp?: boolean;
   /**
    * Block-0 hash the RPC must report before the client sends a transaction. Defaults to the
-   * genesis of the vendored address book (`EXPECTED_GENESIS_HASH`, r1006): r1005 and r1006
+   * genesis of the vendored address book (`EXPECTED_GENESIS_HASH`, r1007 today): r1005, r1006 and r1007
    * share chain id 40204, so the chain id alone cannot tell them apart. Pass another hash for
    * a different network, or `null` to skip the check (a local dev chain).
    */

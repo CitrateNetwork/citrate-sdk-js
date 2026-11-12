@@ -16,6 +16,7 @@ import { ComputeRefunds } from '../../src/compute/refunds';
 import { verifyWalletAddressOnChain } from '../../src/identity/wallet';
 import { WrongNetworkError, assertGenesis, type GenesisSource } from '../../src/utils/network';
 
+const R1007_GENESIS = '0xcf68634502b4fca1e977ac8dd35aa006bb40c04208d5cd55f1c2b508bba96631';
 const R1006_GENESIS = '0xa3651a272fe411948cbb4cf7cca4cee44be4248d32ab4376cea7636821c6cdd4';
 const R1005_GENESIS = '0x1dcfc4909dd9fdcb0f03c823d627e4b2032cc86bef5fc4561030d6c64b9775f1';
 const OWNER = '0x' + '11'.repeat(32);
@@ -179,21 +180,21 @@ afterEach(async () => {
 
 describe('CitrateClient with several RPC URLs checks every endpoint', () => {
   it('refuses when one of three endpoints is on another genesis, though a quorum agrees', async () => {
-    await startNodes(R1006_GENESIS, R1006_GENESIS, R1005_GENESIS);
+    await startNodes(R1007_GENESIS, R1007_GENESIS, R1006_GENESIS);
     const err = await client().verifyNetwork().catch((e: unknown) => e);
     expect(err).toBeInstanceOf(WrongNetworkError);
-    expect((err as Error).message).toContain(R1005_GENESIS);
+    expect((err as Error).message).toContain(R1006_GENESIS);
   });
 
   it('the wrong-genesis endpoint never receives the signed transaction', async () => {
-    const [, , wrong] = await startNodes(R1006_GENESIS, R1006_GENESIS, R1005_GENESIS);
+    const [, , wrong] = await startNodes(R1007_GENESIS, R1007_GENESIS, R1006_GENESIS);
     await expect(client().deployModel(new TextEncoder().encode('m'), DEPLOY)).rejects.toThrow(WrongNetworkError);
     expect(wrong!.count('eth_sendRawTransaction')).toBe(0);
     for (const n of nodes) expect(n.count('eth_sendRawTransaction')).toBe(0);
   });
 
   it('inference on a mixed set refuses before anything is broadcast', async () => {
-    await startNodes(R1005_GENESIS, R1006_GENESIS, R1006_GENESIS);
+    await startNodes(R1006_GENESIS, R1007_GENESIS, R1007_GENESIS);
     await expect(
       client().inference({ modelId: '0x' + 'ab'.repeat(32), inputData: { x: 1 } }),
     ).rejects.toThrow(WrongNetworkError);
@@ -201,34 +202,34 @@ describe('CitrateClient with several RPC URLs checks every endpoint', () => {
   });
 
   it('a failed endpoint is not cached as verified: the next call re-reads it', async () => {
-    const [, , wrong] = await startNodes(R1006_GENESIS, R1006_GENESIS, R1005_GENESIS);
+    const [, , wrong] = await startNodes(R1007_GENESIS, R1007_GENESIS, R1006_GENESIS);
     const c = client();
     await expect(c.verifyNetwork()).rejects.toThrow(WrongNetworkError);
     await pastProviderCache();
     await expect(c.verifyNetwork()).rejects.toThrow(WrongNetworkError);
     expect(wrong!.count('eth_getBlockByNumber', '0x0')).toBeGreaterThanOrEqual(2);
     // The operator fixes the endpoint: the next check passes because it reads block 0 again.
-    wrong!.genesis = R1006_GENESIS;
+    wrong!.genesis = R1007_GENESIS;
     await pastProviderCache();
     await expect(c.verifyNetwork()).resolves.toBeUndefined();
   });
 
   it('refuses when one endpoint cannot return block 0', async () => {
-    const [, broken] = await startNodes(R1006_GENESIS, R1006_GENESIS, R1006_GENESIS);
+    const [, broken] = await startNodes(R1007_GENESIS, R1007_GENESIS, R1007_GENESIS);
     broken!.block0 = 'error';
     await expect(client().verifyNetwork()).rejects.toThrow(WrongNetworkError);
   });
 
   it('refuses, within the client timeout, when one endpoint never answers block 0', async () => {
-    const [, , silent] = await startNodes(R1006_GENESIS, R1006_GENESIS, R1006_GENESIS);
+    const [, , silent] = await startNodes(R1007_GENESIS, R1007_GENESIS, R1007_GENESIS);
     silent!.block0 = 'hang';
     const started = Date.now();
     await expect(client({ timeout: 300 }).verifyNetwork()).rejects.toThrow(WrongNetworkError);
     expect(Date.now() - started).toBeLessThan(5000);
   });
 
-  it('a fully r1006 set passes, reads block 0 from each endpoint, and broadcasts to all', async () => {
-    await startNodes(R1006_GENESIS, R1006_GENESIS, R1006_GENESIS);
+  it('a fully r1007 set passes, reads block 0 from each endpoint, and broadcasts to all', async () => {
+    await startNodes(R1007_GENESIS, R1007_GENESIS, R1007_GENESIS);
     const c = client();
     await expect(c.verifyNetwork()).resolves.toBeUndefined();
     for (const n of nodes) expect(n.count('eth_getBlockByNumber', '0x0')).toBeGreaterThanOrEqual(1);
@@ -242,14 +243,14 @@ describe('CitrateClient with several RPC URLs checks every endpoint', () => {
 
 describe('caller-supplied FallbackProvider: every endpoint is checked', () => {
   it('ComputeRefunds refuses before any eth_call when one endpoint is on another genesis', async () => {
-    await startNodes(R1006_GENESIS, R1006_GENESIS, R1005_GENESIS);
+    await startNodes(R1007_GENESIS, R1007_GENESIS, R1006_GENESIS);
     const r = new ComputeRefunds(fallback());
     await expect(r.refundOwed('0x' + 'ab'.repeat(20))).rejects.toThrow(WrongNetworkError);
     for (const n of nodes) expect(n.count('eth_call')).toBe(0);
   });
 
   it('verifyWalletAddressOnChain refuses when one endpoint is on another genesis', async () => {
-    await startNodes(R1005_GENESIS, R1006_GENESIS, R1006_GENESIS);
+    await startNodes(R1006_GENESIS, R1007_GENESIS, R1007_GENESIS);
     await expect(verifyWalletAddressOnChain(UID, fallback())).rejects.toThrow(WrongNetworkError);
     for (const n of nodes) expect(n.count('eth_call')).toBe(0);
   });
@@ -262,7 +263,7 @@ describe('nested FallbackProviders: every leaf endpoint is checked', () => {
   }
 
   it('a claim through an outer FallbackProvider wrapping an inner one refuses; r1005 never gets the raw tx', async () => {
-    const [, , wrong] = await startNodes(R1006_GENESIS, R1006_GENESIS, R1005_GENESIS);
+    const [, , wrong] = await startNodes(R1007_GENESIS, R1007_GENESIS, R1006_GENESIS);
     const signer = new Wallet(OWNER, nested());
     const r = new ComputeRefunds(signer);
     await expect(r.claimNativeRefund()).rejects.toThrow(WrongNetworkError);
@@ -272,13 +273,13 @@ describe('nested FallbackProviders: every leaf endpoint is checked', () => {
   });
 
   it('verifyWalletAddressOnChain refuses through a nested FallbackProvider', async () => {
-    await startNodes(R1006_GENESIS, R1005_GENESIS, R1006_GENESIS);
+    await startNodes(R1007_GENESIS, R1006_GENESIS, R1007_GENESIS);
     await expect(verifyWalletAddressOnChain(UID, nested())).rejects.toThrow(WrongNetworkError);
     for (const n of nodes) expect(n.count('eth_call')).toBe(0);
   });
 
-  it('a nested all-r1006 set passes: every leaf reads block 0 and the claim is broadcast', async () => {
-    await startNodes(R1006_GENESIS, R1006_GENESIS, R1006_GENESIS);
+  it('a nested all-r1007 set passes: every leaf reads block 0 and the claim is broadcast', async () => {
+    await startNodes(R1007_GENESIS, R1007_GENESIS, R1007_GENESIS);
     const r = new ComputeRefunds(new Wallet(OWNER, nested()));
     const err = await r.claimNativeRefund().catch((e: unknown) => e);
     expect(err).not.toBeInstanceOf(WrongNetworkError);
@@ -291,7 +292,7 @@ describe('provider shapes that cannot be resolved to endpoints fail closed', () 
   /** A provider-like object that answers block 0 with r1006 and wraps `inner`. */
   function wrapper(inner: unknown[] | unknown): GenesisSource & { providerConfigs: unknown } {
     return {
-      getBlock: async () => ({ hash: R1006_GENESIS }),
+      getBlock: async () => ({ hash: R1007_GENESIS }),
       providerConfigs: inner,
     };
   }
@@ -299,25 +300,25 @@ describe('provider shapes that cannot be resolved to endpoints fail closed', () 
   it('a providerConfigs cycle refuses', async () => {
     const a = wrapper([]);
     (a as { providerConfigs: unknown }).providerConfigs = [{ provider: a }];
-    await expect(assertGenesis(a, R1006_GENESIS)).rejects.toThrow(WrongNetworkError);
-    await expect(assertGenesis(a, R1006_GENESIS)).rejects.toThrow(/contains itself|cannot resolve/);
+    await expect(assertGenesis(a, R1007_GENESIS)).rejects.toThrow(WrongNetworkError);
+    await expect(assertGenesis(a, R1007_GENESIS)).rejects.toThrow(/contains itself|cannot resolve/);
   });
 
   it('nesting deeper than the bound refuses', async () => {
-    let p: GenesisSource = { getBlock: async () => ({ hash: R1006_GENESIS }) };
+    let p: GenesisSource = { getBlock: async () => ({ hash: R1007_GENESIS }) };
     for (let i = 0; i < 12; i++) p = wrapper([{ provider: p }]);
-    await expect(assertGenesis(p, R1006_GENESIS)).rejects.toThrow(WrongNetworkError);
-    await expect(assertGenesis(p, R1006_GENESIS)).rejects.toThrow(/nested more than/);
+    await expect(assertGenesis(p, R1007_GENESIS)).rejects.toThrow(WrongNetworkError);
+    await expect(assertGenesis(p, R1007_GENESIS)).rejects.toThrow(/nested more than/);
   });
 
   it('a providerConfigs that is not a list refuses', async () => {
-    await expect(assertGenesis(wrapper({ provider: 'x' }), R1006_GENESIS)).rejects.toThrow(WrongNetworkError);
+    await expect(assertGenesis(wrapper({ provider: 'x' }), R1007_GENESIS)).rejects.toThrow(WrongNetworkError);
   });
 
   it('an empty providerConfigs at any level refuses', async () => {
-    const leaf: GenesisSource = { getBlock: async () => ({ hash: R1006_GENESIS }) };
+    const leaf: GenesisSource = { getBlock: async () => ({ hash: R1007_GENESIS }) };
     await expect(
-      assertGenesis(wrapper([{ provider: leaf }, { provider: wrapper([]) }]), R1006_GENESIS),
+      assertGenesis(wrapper([{ provider: leaf }, { provider: wrapper([]) }]), R1007_GENESIS),
     ).rejects.toThrow(WrongNetworkError);
   });
 
@@ -325,13 +326,13 @@ describe('provider shapes that cannot be resolved to endpoints fail closed', () 
     const a = wrapper([]);
     const b = wrapper([{ provider: a }]);
     (a as { providerConfigs: unknown }).providerConfigs = [{ provider: b }];
-    await expect(assertGenesis(a, R1006_GENESIS)).rejects.toThrow(/contains itself/);
+    await expect(assertGenesis(a, R1007_GENESIS)).rejects.toThrow(/contains itself/);
   });
 
-  it('two levels of r1006 leaves pass', async () => {
-    const leaf: GenesisSource = { getBlock: async () => ({ hash: R1006_GENESIS }) };
+  it('two levels of r1007 leaves pass', async () => {
+    const leaf: GenesisSource = { getBlock: async () => ({ hash: R1007_GENESIS }) };
     await expect(
-      assertGenesis(wrapper([{ provider: leaf }, { provider: wrapper([{ provider: leaf }]) }]), R1006_GENESIS),
+      assertGenesis(wrapper([{ provider: leaf }, { provider: wrapper([{ provider: leaf }]) }]), R1007_GENESIS),
     ).resolves.toBeUndefined();
   });
 });

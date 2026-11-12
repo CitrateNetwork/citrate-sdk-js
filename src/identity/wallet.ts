@@ -128,7 +128,7 @@ export async function verifyWalletAddressOnChain(
   if (chainId !== expectedChain) {
     throw new WalletPredictionError(`provider is on chain ${chainId}, expected chain ${expectedChain} — refusing to verify`);
   }
-  // Same chain id is not the same network (r1005 and r1006 are both 40204): verifying the
+  // Same chain id is not the same network (r1005, r1006 and r1007 are all 40204): verifying the
   // book's factory also needs the book's genesis.
   const usesBook = opts.factory === undefined && opts.chainId === undefined;
   const expectedGenesis =
