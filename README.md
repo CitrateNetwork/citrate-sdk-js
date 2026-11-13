@@ -332,7 +332,7 @@ React ≥ 16.8 is an optional peer dependency; the main entry point never import
 
 ## Network constants
 
-Addresses and endpoints come from a vendored network artifact (`src/generated/federation-contract.json`), so they stay correct across chain redeployments. Import them; don't copy literals. This release carries the **r1006** address book (citrate-chain `contracts/addresses/r1006/40204.json`, genesis block `0xa3651a27…6cdd4`).
+Addresses and endpoints come from a vendored network artifact (`src/generated/federation-contract.json`), so they stay correct across chain redeployments. Import them; don't copy literals. This release carries the **r1007** address book (citrate-chain `contracts/addresses/40204.json`, the root book, genesis block `0xcf686345…ba96631`).
 
 | Constant | Value / contents |
 |---|---|
@@ -345,13 +345,13 @@ Addresses and endpoints come from a vendored network artifact (`src/generated/fe
 | `PRECOMPILES` | The precompile table carried in the network artifact (book names) |
 | `PRECOMPILE_ADDRESSES` | Every chain precompile by key, generated from citrate-chain (table below), plus the legacy keys |
 | `CHAIN_PRECOMPILES` | The same generated table with group, bridged and activation flags |
-| `EXPECTED_GENESIS_HASH` | Block-0 hash of the network the address book is for (r1006) |
+| `EXPECTED_GENESIS_HASH` | Block-0 hash of the network the address book is for (r1007) |
 
 Block explorer: <https://explorer.citrate.ai>. Maintainers refresh the artifact with `npm run sync-contract`.
 
 ### Network guard
 
-Two networks can share chain id 40204 (r1005 and r1006 do), so the chain id alone can't tell whether an RPC has the contracts in the address book. Before `CitrateClient` sends a transaction, and before `identity.verifyWalletAddressOnChain` or `compute.ComputeRefunds` use a book address, the SDK reads block 0 from the RPC and throws `WrongNetworkError` (code `WRONG_NETWORK`) unless its hash is `EXPECTED_GENESIS_HASH`. With several RPC URLs every endpoint is checked, since a transaction is broadcast to all of them. Call `client.verifyNetwork()` to check up front. For another network pass `expectedGenesisHash: '0x…'`; for a local dev chain pass `expectedGenesisHash: null`.
+Several networks share chain id 40204 (r1005, r1006 and r1007 do), so the chain id alone can't tell whether an RPC has the contracts in the address book. Before `CitrateClient` sends a transaction, and before `identity.verifyWalletAddressOnChain` or `compute.ComputeRefunds` use a book address, the SDK reads block 0 from the RPC and throws `WrongNetworkError` (code `WRONG_NETWORK`) unless its hash is `EXPECTED_GENESIS_HASH`. With several RPC URLs every endpoint is checked, since a transaction is broadcast to all of them. Call `client.verifyNetwork()` to check up front. For another network pass `expectedGenesisHash: '0x…'`; for a local dev chain pass `expectedGenesisHash: null`.
 
 ### Precompiles
 
